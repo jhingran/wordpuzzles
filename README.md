@@ -165,10 +165,54 @@ Words like NECESSITIES, LORRIES, IRONIES, SHRUBBERIES are **not** penalised beca
 
 --time-limit F         Backtracking time limit in seconds (default: 60)
 --noise F              Score randomisation ±fraction for fill diversity (default: 0.15)
+--interactive          After solving, enter a feedback loop to ban words and re-solve
 
 --png FILE             Save filled grid as PNG
 --cell-px N            Cell size in pixels (default: 64)
 ```
+
+### Interactive mode
+
+Run with `--interactive` to refine the fill in a terminal loop:
+
+```bash
+python3 filler.py -n 15 --seed 401 -e 12 --improve --interactive --png filled.png
+```
+
+After each solve the program prints a numbered word list with quality scores:
+
+```
+ACROSS
+   1. NETASSETS  (90)
+   9. STEWARD    (90)
+  14. SQUALIDNESS (90)
+  ...
+DOWN
+   2. THEPIPS    (90)
+  13. SASSAFRAS  (90)
+  ...
+
+Ban words (comma-separated, blank to finish):
+```
+
+Type any words you want removed (comma-separated) and press Enter — the solver re-runs with those words permanently excluded and the PNG is updated. The ban list accumulates across rounds. Press Enter on a blank line to stop.
+
+```
+Ban words (comma-separated, blank to finish): TEDDANSON, PASSOFFAS
+# → re-solves without those two words
+
+Ban words (comma-separated, blank to finish): BOOHISS
+# → re-solves without all three banned words
+
+Ban words (comma-separated, blank to finish):
+# → blank line exits
+```
+
+Banning a word that crossing slots depend on causes the solver to backtrack into those slots too, so each round can produce a substantially different fill.
+
+### Post-solve local optimizer
+
+After every solve (interactive or not) the filler runs a fast greedy pass: for each slot it looks for a higher-scoring word that satisfies the exact same crossing letters, and swaps if one exists. This upgrades 1–3 words per fill at negligible cost and is always on.
 
 ### Typical recipes
 
