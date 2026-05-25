@@ -1,6 +1,6 @@
-# British Crossword Grid Generator
+# British Crossword Grid Generator & Filler
 
-A Python tool for generating valid British-style crossword grids with rotational symmetry, configurable word-length distributions, and PNG output.
+A Python tool for generating valid British-style crossword grids and filling them with words from a quality-scored word list.
 
 ## Requirements
 
@@ -9,17 +9,27 @@ A Python tool for generating valid British-style crossword grids with rotational
 
 ## Quick start
 
+**Generate a grid:**
 ```bash
-python3 grid_gen.py -n 15 --seed 42 -e 12 --numbers --improve --png grid.png
+python3 grid_gen.py -n 15 --seed 42 -e 12 --improve --numbers --png grid.png
 ```
 
-## How it works
+**Generate and fill a grid:**
+```bash
+python3 filler.py -n 15 --seed 400 -e 12 --improve --png filled.png
+```
 
-### 1. Base pattern
+---
 
-For an odd-sized grid of size *n*, every cell at an even row **and** even column is blocked. For an 11×11 grid this places 25 isolated black squares at (2,2), (2,4), …, (10,10).
+## Grid generator (`grid_gen.py`)
 
-### 2. Extensions
+### How it works
+
+#### 1. Base pattern
+
+For an odd-sized grid of size *n*, every cell at an even row **and** even column is blocked. For a 15×15 grid this places 49 isolated black squares at (2,2), (2,4), …, (14,14) — about 22% density.
+
+#### 2. Extensions
 
 The generator randomly grows the base squares by adding **connector** cells between adjacent base squares. Four shape types are used:
 
@@ -32,7 +42,7 @@ The generator randomly grows the base squares by adding **connector** cells betw
 
 Every extension is stamped with full rotational symmetry (90° or 180°) before being applied.
 
-### 3. Validation
+#### 3. Validation
 
 Each candidate extension is accepted only if:
 
@@ -40,15 +50,18 @@ Each candidate extension is accepted only if:
 - All white cells remain connected
 - No two consecutive letters in any word are both **unchecked** (i.e. only part of one word rather than crossed by a perpendicular word)
 
-### 4. Improvement pass (`--improve`)
+#### 4. Improvement pass (`--improve`)
 
-After generation, a greedy pass tries to remove orbits of black squares to reduce short words:
+After generation, a greedy pass removes orbits of black squares to eliminate short words and bring density down to a proper British crossword level (~28–32%):
 
 - At each step, every removable orbit is tried and the one that eliminates the most short words is applied
-- Stops when no removal helps or when density would drop below `--min-density`
+- Stops when the short-word count reaches `--max-short` (default 4) or no removal helps
+- Will not drop density below `--min-density` (default 0.18)
 - The default target is words shorter than 5 letters; adjust with `--target-word`
 
-## Options
+A typical 15×15 grid after improvement has ≤ 4 three-letter words, with most entries being 5, 7, or 9+ letters.
+
+### Options
 
 ```
 -n / --size N          Grid size, must be odd (default: 11)
@@ -62,50 +75,134 @@ After generation, a greedy pass tries to remove orbits of black squares to reduc
 
 --improve              Run the greedy improvement pass after generation
 --target-word N        Improvement target: eliminate words shorter than N (default: 5)
---min-density F        Density floor for improvement pass, 0–1 (default: 0.35)
+--min-density F        Density floor for improvement pass, 0–1 (default: 0.18)
+--max-short N          Stop improving when short-word count ≤ N (default: 4)
 
 --png FILE             Save PNG output (use {seed} as placeholder with --count > 1)
 --cell-px N            Cell size in pixels for PNG (default: 52)
 ```
 
-## Typical recipes
+### Typical recipes
 
 **Single 15×15 grid with numbers, saved to PNG:**
 ```bash
-python3 grid_gen.py -n 15 --seed 42 -e 12 --numbers --png grid.png
+python3 grid_gen.py -n 15 --seed 42 -e 12 --improve --numbers --png grid.png
 ```
 
-**Three varied grids, improved, at 36% density:**
+**Three varied grids:**
 ```bash
-python3 grid_gen.py -n 15 --count 3 --seed 400 -e 12 --numbers \
-    --improve --min-density 0.35 --png grid_{seed}.png
+python3 grid_gen.py -n 15 --count 3 --seed 400 -e 12 --improve --numbers --png grid_{seed}.png
 ```
 
-**Denser grid (more 3-letter words, fewer removals):**
+**Allow more short words (denser grid):**
 ```bash
-python3 grid_gen.py -n 15 --seed 42 -e 12 --numbers \
-    --improve --min-density 0.37 --png grid.png
+python3 grid_gen.py -n 15 --seed 42 -e 12 --improve --max-short 8 --min-density 0.28 --numbers --png grid.png
 ```
 
-**More open grid (fewer short words):**
+**180° symmetry:**
 ```bash
-python3 grid_gen.py -n 15 --seed 42 -e 12 --numbers \
-    --improve --min-density 0.33 --png grid.png
+python3 grid_gen.py -n 15 --seed 42 -e 12 --sym 180 --improve --numbers --png grid.png
 ```
 
-**180° symmetry instead of 90°:**
+### Typical output
+
+For a 15×15 grid after improvement:
+
+- ~32–36 slots (across + down)
+- 28–32% black squares
+- ≤ 4 three-letter words
+- Word lengths: mix of 5, 7, 9 letters; occasionally 11+
+
+---
+
+## Word filler (`filler.py`)
+
+Fills a generated grid using CSP (Constraint Satisfaction Problem) backtracking.
+
+### Word list
+
+Uses the [Collaborative Crossword Word List](https://github.com/Crossword-Nexus/collaborative-word-list) (~363k entries, `WORD;SCORE` format). It is downloaded automatically on first run to `wordlist.dict`.
+
+Scores range from 100 (perfect) to below 50 (questionable). Only words scoring ≥ 50 are loaded by default.
+
+### Filling strategy
+
+1. **Variable ordering (MRV):** always fill the slot with the fewest remaining candidates first; break ties by most crossings (degree).
+2. **Value ordering:** rank candidate words by `quality_score × crossing_letter_score × noise`, highest first.
+   - *Quality score* — from the word list (50–100).
+   - *Crossing-letter score* — how common each crossing letter is at its position in the corpus, weighted by how many words remain compatible (forward-looking flexibility).
+   - *Noise* — a small random ±`noise` factor so different seeds produce varied fills.
+3. **Forward checking:** after placing each word, immediately intersect every crossing slot's domain with the compatible set; backtrack if any domain empties.
+
+### Word quality filters
+
+Three layers of filtering ensure clean fill:
+
+| Filter | What it removes |
+|--------|----------------|
+| Score threshold (`--min-score 50`) | Low-quality or obscure entries |
+| Acronym filter | Vowelless abbreviations (MCS, WRT, …) — a short allowlist keeps GPS, ESPN, JFK, etc. |
+| S-plural penalty | Words that are just another word + S or +ES (TASKS→TASK, GASES→GAS) are scored at 15% of their original value, so the solver strongly prefers non-trivial alternatives |
+
+Words like NECESSITIES, LORRIES, IRONIES, SHRUBBERIES are **not** penalised because their stems (NECESSITIE, LORRIE, IRONIE, SHRUBBERIE) are not words.
+
+### Options
+
+```
+-n / --size N          Grid size (default: 15)
+-s / --seed N          Random seed — controls both the grid and fill diversity (default: 400)
+-e / --extensions N    Extension groups (default: 12)
+--sym 90|180           Rotational symmetry (default: 90°)
+--improve              Run the grid improvement pass
+--min-density F        Density floor for improvement (default: 0.18)
+--max-short N          Stop improving at this many short words (default: 4)
+--min-word N           Minimum word length (default: 3)
+
+--wordlist FILE        Path to word list (default: wordlist.dict)
+--min-score N          Minimum word quality score to load (default: 50)
+--download             Force re-download of word list
+--allow-s-plurals      Disable the S-plural score penalty
+
+--time-limit F         Backtracking time limit in seconds (default: 60)
+--noise F              Score randomisation ±fraction for fill diversity (default: 0.15)
+
+--png FILE             Save filled grid as PNG
+--cell-px N            Cell size in pixels (default: 64)
+```
+
+### Typical recipes
+
+**Fill a grid and save PNG:**
 ```bash
-python3 grid_gen.py -n 15 --seed 42 -e 12 --sym 180 --numbers --png grid.png
+python3 filler.py -n 15 --seed 400 -e 12 --improve --png filled.png
 ```
 
-## Typical output
+**Compare fills across seeds (same grid structure):**
+```bash
+python3 filler.py -n 15 --seed 400 -e 12 --improve --png filled_400.png
+python3 filler.py -n 15 --seed 401 -e 12 --improve --png filled_401.png
+python3 filler.py -n 15 --seed 402 -e 12 --improve --png filled_402.png
+```
 
-For a 15×15 grid at 36% density after improvement:
+**More varied fills (higher noise):**
+```bash
+python3 filler.py -n 15 --seed 400 -e 12 --improve --noise 0.30 --png filled.png
+```
 
-- ~24 across + ~24 down clues
-- Word lengths: mix of 3, 5, and 7 letters
-- All words satisfy the British no-consecutive-unchecked rule
+**Deterministic fill (no noise):**
+```bash
+python3 filler.py -n 15 --seed 400 -e 12 --improve --noise 0 --png filled.png
+```
 
-## Next steps
+### Typical output
 
-- Word-list filling: assign words from a dictionary to the grid slots
+For a 15×15 grid (seed 400, 12 extensions, improved):
+
+```
+Size 15×15  black=69/225 (30%)  across=18  down=18
+Word-length distribution: len3:4  len5:12  len7:16  len9:4
+Slots: 36 total
+SOLVED — 0.04s, 36 nodes explored
+```
+
+The solver almost never needs to backtrack thanks to MRV + forward checking — most grids solve in under 0.1 seconds with one node visited per slot.

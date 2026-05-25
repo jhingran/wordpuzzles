@@ -18,6 +18,7 @@ Strategy
 """
 
 import argparse
+import random
 import sys
 import time
 import urllib.request
@@ -33,6 +34,27 @@ WORDLIST_URL = (
 DEFAULT_WORDLIST = Path(__file__).parent / "wordlist.dict"
 
 Cell = tuple[int, int]
+
+# ── Acronym / abbreviation filtering ─────────────────────────────────────
+# Y counts as a vowel (CRY, FLY, GYM are fine).  Any word with *no* vowel
+# from AEIOUY is treated as a bare abbreviation and excluded — unless it
+# appears in this explicit allowlist of well-known, crossword-acceptable ones.
+_VOWELS = frozenset("AEIOUY")
+
+_ABBREV_OK = frozenset({
+    # Sports & media
+    "NFL", "NHL", "NBA", "CBS", "NBC", "CNN", "MTV", "TNT", "TLC", "BBC",
+    "PBS", "NPR", "MGM", "SNL", "TBS", "ESPN",
+    # Common abbreviations everyone knows
+    "BTW", "TBH", "FYI", "RSVP", "BLT", "BBQ", "MVP", "VIP",
+    "CPR", "GPS", "LCD", "DVD", "DVR", "USB",
+    # Historical / cultural initials
+    "JFK", "MLK", "LBJ", "FDR", "JFK",
+    # Interjections (legitimate crossword fill)
+    "HMM", "BRR", "GRR", "PST", "SHH",
+    # Widely recognised orgs
+    "LGBT", "LGBTQ", "NAACP",
+})
 
 
 # ── Slot ──────────────────────────────────────────────────────────────────
@@ -60,11 +82,37 @@ def download_wordlist(path: Path) -> None:
     print(f"{path.stat().st_size // 1024:,} KB")
 
 
+def _is_acronym(word: str) -> bool:
+    """True if word looks like a bare abbreviation (no vowels incl. Y)."""
+    return not any(c in _VOWELS for c in word) and word not in _ABBREV_OK
+
+
+def _is_trivial_s_plural(word: str, word_scores: dict[str, int]) -> bool:
+    """True if word is another word with S (or ES) simply appended.
+
+    Catches: TASKS→TASK, ROSES→ROSE, GASES→GAS, FOXES→FOX.
+    Passes:  LORRIES (LORRIE not a word), STORIES (STORIE not a word),
+             NECESSITIES (NECESSITIE not a word), SINUS (SINU not a word).
+    """
+    if len(word) < 4:
+        return False
+    # Simple +S: TASKS → TASK, ROSES → ROSE
+    if word.endswith("S") and word[:-1] in word_scores:
+        return True
+    # +ES added to consonant-ending stem: GASES → GAS, FOXES → FOX
+    if len(word) >= 5 and word.endswith("ES") and word[:-2] in word_scores:
+        return True
+    return False
+
+
 def load_wordlist(
     path: Path,
-    min_score: int = 40,
+    min_score: int = 50,
     min_len: int = 3,
     max_len: int = 21,
+    filter_acronyms: bool = True,
+    penalize_s_plurals: bool = True,
+    s_plural_factor: float = 0.15,
 ) -> tuple[
     dict[str, int],           # word → quality score
     dict[tuple, frozenset],   # (length, pos, letter) → frozenset[word]
@@ -75,6 +123,7 @@ def load_wordlist(
         download_wordlist(path)
 
     word_scores: dict[str, int] = {}
+    n_acronym = 0
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -90,7 +139,23 @@ def load_wordlist(
                 continue
             if score < min_score or not (min_len <= len(word) <= max_len):
                 continue
+            if filter_acronyms and _is_acronym(word):
+                n_acronym += 1
+                continue
             word_scores[word] = max(word_scores.get(word, 0), score)
+    if n_acronym:
+        print(f"  (filtered {n_acronym:,} vowelless abbreviations)")
+
+    # Penalise trivial S-plurals (word = stem + S, stem also in wordlist).
+    # Reduce their score to s_plural_factor of original so the solver
+    # strongly prefers non-trivial alternatives but can still fall back.
+    if penalize_s_plurals:
+        n_plural = sum(1 for w in word_scores if _is_trivial_s_plural(w, word_scores))
+        for w in list(word_scores):
+            if _is_trivial_s_plural(w, word_scores):
+                word_scores[w] = max(1, round(word_scores[w] * s_plural_factor))
+        if n_plural:
+            print(f"  (penalized {n_plural:,} trivial S-plurals to {s_plural_factor:.0%} score)")
 
     # Position index and letter-frequency table
     pos_sets: dict[tuple, set] = defaultdict(set)
@@ -201,6 +266,8 @@ def _backtrack(
     used: set[str],
     counter: list[int],
     deadline: float,
+    rng: random.Random,
+    noise: float = 0.15,
 ) -> Optional[dict[Slot, str]]:
 
     if not unassigned:
@@ -221,11 +288,17 @@ def _backtrack(
     if not domain:
         return None
 
-    # Sort candidates: word_score × crossing_letter_score, descending
+    # Sort candidates: word_score × crossing_letter_score × noise, descending.
+    # The noise term (uniform in [1-noise, 1+noise]) breaks ties between
+    # similarly-scored words so successive seeds produce varied fills.
     cx = crossings[slot]
     ranked = sorted(
         domain,
-        key=lambda w: word_scores.get(w, 0) * crossing_score(w, cx, pos_index, letter_freq),
+        key=lambda w: (
+            word_scores.get(w, 0)
+            * crossing_score(w, cx, pos_index, letter_freq)
+            * (1.0 - noise + rng.random() * 2 * noise)
+        ),
         reverse=True,
     )
 
@@ -258,7 +331,7 @@ def _backtrack(
         result = _backtrack(
             assignment, new_domains, remaining,
             crossings, pos_index, letter_freq, word_scores,
-            used, counter, deadline,
+            used, counter, deadline, rng, noise,
         )
 
         del assignment[slot]
@@ -279,6 +352,8 @@ def fill(
     length_index: dict[int, frozenset],
     min_len: int = 3,
     time_limit: float = 60.0,
+    seed: int = 0,
+    noise: float = 0.15,
 ) -> Optional[dict[Slot, str]]:
     """Attempt to fill the grid; return assignment dict or None on failure."""
 
@@ -305,16 +380,17 @@ def fill(
     # (MRV takes over immediately, but this seeds the first pick sensibly)
     unassigned = sorted(slots, key=lambda s: (-s.length, -len(crossings[s])))
 
+    rng = random.Random(seed)
     counter = [0]
     deadline = time.monotonic() + time_limit
 
-    print(f"Searching (limit {time_limit:.0f}s) ...", flush=True)
+    print(f"Searching (seed={seed}, noise={noise:.2f}, limit {time_limit:.0f}s) ...", flush=True)
     t0 = time.monotonic()
     try:
         result = _backtrack(
             {}, domains, unassigned, crossings,
             pos_index, letter_freq, word_scores,
-            set(), counter, deadline,
+            set(), counter, deadline, rng, noise,
         )
     except _Timeout:
         elapsed = time.monotonic() - t0
@@ -453,17 +529,23 @@ def main() -> None:
     parser.add_argument("-e", "--extensions", type=int,   default=12)
     parser.add_argument("--sym",              choices=["90","180"], default="90")
     parser.add_argument("--improve",          action="store_true")
-    parser.add_argument("--min-density",      type=float, default=0.35)
+    parser.add_argument("--min-density",      type=float, default=0.18)
+    parser.add_argument("--max-short",        type=int,   default=4,
+                        help="Stop improving when short-word count drops to this")
     parser.add_argument("--min-word",         type=int,   default=3)
     # Word list
     parser.add_argument("--wordlist",  type=Path, default=DEFAULT_WORDLIST)
-    parser.add_argument("--min-score", type=int,  default=40,
+    parser.add_argument("--min-score", type=int,  default=50,
                         help="Minimum word-quality score to include")
     parser.add_argument("--download",  action="store_true",
                         help="Force re-download of word list")
+    parser.add_argument("--allow-s-plurals", action="store_true",
+                        help="Do not penalise trivial S-plurals (e.g. TASKS, SEEMS)")
     # Search
     parser.add_argument("--time-limit", type=float, default=60.0,
                         help="Backtracking time limit in seconds")
+    parser.add_argument("--noise", type=float, default=0.15,
+                        help="Scoring noise ±fraction to diversify fills (0=off)")
     # Output
     parser.add_argument("--png",     metavar="FILE", default=None)
     parser.add_argument("--cell-px", type=int, default=64)
@@ -474,6 +556,7 @@ def main() -> None:
         download_wordlist(args.wordlist)
     word_scores, pos_index, letter_freq, length_index = load_wordlist(
         args.wordlist, min_score=args.min_score, min_len=args.min_word,
+        penalize_s_plurals=not args.allow_s_plurals,
     )
 
     # Grid
@@ -484,7 +567,8 @@ def main() -> None:
     )
     if args.improve:
         blocked, removed = improve_grid(
-            blocked, args.size, args.sym, args.min_word, 5, args.min_density
+            blocked, args.size, args.sym, args.min_word, 5,
+            args.min_density, args.max_short,
         )
         print(f"Improved: removed {removed} black squares")
 
@@ -496,6 +580,7 @@ def main() -> None:
     assignment = fill(
         blocked, args.size, word_scores, pos_index, letter_freq, length_index,
         min_len=args.min_word, time_limit=args.time_limit,
+        seed=args.seed, noise=args.noise,
     )
 
     if assignment is None:

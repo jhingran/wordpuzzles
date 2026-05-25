@@ -271,13 +271,15 @@ def improve_grid(
     sym: str = "90",
     min_len: int = 3,
     target_word: int = 5,
-    min_density: float = 0.35,
+    min_density: float = 0.18,
+    max_short_words: int = 4,
 ) -> tuple[set[Cell], int]:
     """Greedily remove orbits of black squares to reduce short words.
 
     At each iteration try every removable orbit and apply the one that
     reduces the count of words shorter than `target_word` the most.
-    Stops when density would drop below `min_density`.
+    Stops when: count of short words ≤ max_short_words, density would
+    drop below min_density, or no removal helps.
     Returns (new_blocked, n_removed).
     """
     fn = orbit_90 if sym == "90" else orbit_180
@@ -285,9 +287,12 @@ def improve_grid(
     total_cells = n * n
 
     while True:
+        current_score = _short_word_count(current, n, min_len, target_word)
+        if current_score <= max_short_words:
+            break
+
         best_blocked: Optional[set[Cell]] = None
         best_gain = 0
-        current_score = _short_word_count(current, n, min_len, target_word)
 
         seen: set[frozenset] = set()
         for r, c in sorted(current):
@@ -297,7 +302,6 @@ def improve_grid(
             seen.add(orb)
 
             candidate = current - orb
-            # Respect density floor
             if len(candidate) / total_cells < min_density:
                 continue
             if not is_valid(candidate, n, min_len):
@@ -508,8 +512,10 @@ def main() -> None:
                         help="After generating, greedily remove black squares to lengthen short words")
     parser.add_argument("--target-word", type=int, default=5,
                         help="Improvement target: try to eliminate words shorter than this")
-    parser.add_argument("--min-density", type=float, default=0.35,
+    parser.add_argument("--min-density", type=float, default=0.18,
                         help="Minimum black-square density during improvement (0–1)")
+    parser.add_argument("--max-short", type=int, default=4,
+                        help="Stop improving when short-word count drops to this")
     args = parser.parse_args()
 
     if args.size % 2 == 0:
@@ -532,7 +538,8 @@ def main() -> None:
 
         if args.improve:
             blocked, n_removed = improve_grid(blocked, n, args.sym, args.min_word,
-                                              args.target_word, args.min_density)
+                                              args.target_word, args.min_density,
+                                              args.max_short)
             improve_note = f"  improved: -{n_removed} black squares"
         else:
             improve_note = ""
