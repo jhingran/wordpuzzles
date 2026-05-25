@@ -268,6 +268,7 @@ def _backtrack(
     deadline: float,
     rng: random.Random,
     noise: float = 0.15,
+    banned: frozenset = frozenset(),
 ) -> Optional[dict[Slot, str]]:
 
     if not unassigned:
@@ -284,7 +285,7 @@ def _backtrack(
         key=lambda s: (len(domains[s]), -len(crossings[s])),
     )
 
-    domain = domains[slot] - used
+    domain = domains[slot] - used - banned
     if not domain:
         return None
 
@@ -317,7 +318,7 @@ def _backtrack(
             else:
                 key = (cross_slot.length, their_pos, word[my_pos])
                 filtered = new_domains[cross_slot] & pos_index.get(key, frozenset())
-                if not filtered - used - {word}:
+                if not filtered - used - banned - {word}:
                     ok = False
                     break
                 new_domains[cross_slot] = filtered
@@ -331,7 +332,7 @@ def _backtrack(
         result = _backtrack(
             assignment, new_domains, remaining,
             crossings, pos_index, letter_freq, word_scores,
-            used, counter, deadline, rng, noise,
+            used, counter, deadline, rng, noise, banned,
         )
 
         del assignment[slot]
@@ -341,6 +342,52 @@ def _backtrack(
             return result
 
     return None
+
+
+def local_optimize(
+    assignment: dict[Slot, str],
+    crossings: dict[Slot, list[tuple[Slot, int, int]]],
+    pos_index: dict[tuple, frozenset],
+    length_index: dict[int, frozenset],
+    word_scores: dict[str, int],
+    banned: frozenset = frozenset(),
+) -> tuple[dict[Slot, str], int]:
+    """Greedy post-solve pass: for each slot, swap to a higher-scoring word
+    that satisfies the exact same crossing letters.  Repeats until stable.
+    Returns (improved_assignment, number_of_swaps).
+    """
+    result = dict(assignment)
+    used = set(result.values())
+    total_swaps = 0
+
+    improved = True
+    while improved:
+        improved = False
+        # Worst-scoring words first — most likely to benefit from a swap
+        for slot in sorted(result, key=lambda s: word_scores.get(result[s], 0)):
+            current = result[slot]
+
+            # Intersect crossing constraints to get the exact compatible set
+            compatible = length_index.get(slot.length, frozenset())
+            for cross_slot, my_pos, their_pos in crossings[slot]:
+                letter = result[cross_slot][their_pos]
+                compatible = compatible & pos_index.get(
+                    (slot.length, my_pos, letter), frozenset()
+                )
+
+            candidates = compatible - used - banned - {current}
+            if not candidates:
+                continue
+
+            best = max(candidates, key=lambda w: word_scores.get(w, 0))
+            if word_scores.get(best, 0) > word_scores.get(current, 0):
+                used.discard(current)
+                result[slot] = best
+                used.add(best)
+                improved = True
+                total_swaps += 1
+
+    return result, total_swaps
 
 
 def fill(
@@ -354,6 +401,7 @@ def fill(
     time_limit: float = 60.0,
     seed: int = 0,
     noise: float = 0.15,
+    banned: frozenset = frozenset(),
 ) -> Optional[dict[Slot, str]]:
     """Attempt to fill the grid; return assignment dict or None on failure."""
 
@@ -371,26 +419,25 @@ def fill(
     if missing:
         print(f"WARNING: no words of length {missing} in dictionary — fill will fail.")
 
-    # Initialise domains
+    # Initialise domains (subtract banned words immediately)
     domains: dict[Slot, frozenset] = {
-        slot: length_index.get(slot.length, frozenset()) for slot in slots
+        slot: length_index.get(slot.length, frozenset()) - banned for slot in slots
     }
 
-    # Sort unassigned longest-first as the initial ordering hint
-    # (MRV takes over immediately, but this seeds the first pick sensibly)
     unassigned = sorted(slots, key=lambda s: (-s.length, -len(crossings[s])))
 
     rng = random.Random(seed)
     counter = [0]
     deadline = time.monotonic() + time_limit
 
-    print(f"Searching (seed={seed}, noise={noise:.2f}, limit {time_limit:.0f}s) ...", flush=True)
+    ban_note = f", {len(banned)} banned" if banned else ""
+    print(f"Searching (seed={seed}, noise={noise:.2f}{ban_note}, limit {time_limit:.0f}s) ...", flush=True)
     t0 = time.monotonic()
     try:
         result = _backtrack(
             {}, domains, unassigned, crossings,
             pos_index, letter_freq, word_scores,
-            set(), counter, deadline, rng, noise,
+            set(), counter, deadline, rng, noise, banned,
         )
     except _Timeout:
         elapsed = time.monotonic() - t0
@@ -398,8 +445,18 @@ def fill(
         return None
 
     elapsed = time.monotonic() - t0
-    status = "SOLVED" if result else "no solution found"
-    print(f"{status} — {elapsed:.2f}s, {counter[0]:,} nodes explored")
+    if result is None:
+        print(f"No solution found — {elapsed:.2f}s, {counter[0]:,} nodes explored")
+        return None
+
+    print(f"SOLVED — {elapsed:.2f}s, {counter[0]:,} nodes explored")
+
+    # Local optimizer: deterministic swap pass to upgrade low-scoring words
+    result, n_swaps = local_optimize(result, crossings, pos_index, length_index,
+                                     word_scores, banned)
+    if n_swaps:
+        print(f"Optimized: {n_swaps} word(s) upgraded by local swap")
+
     return result
 
 
@@ -516,6 +573,40 @@ def render_filled_png(
     print(f"PNG saved → {path}")
 
 
+# ── Word-list display ─────────────────────────────────────────────────────
+
+def print_word_list(
+    blocked: set[Cell],
+    n: int,
+    assignment: dict[Slot, str],
+    word_scores: dict[str, int],
+    min_len: int = 3,
+) -> None:
+    """Print the fill as a numbered across/down list for easy review."""
+    from grid_gen import _number_cells
+    numbers = _number_cells(blocked, n, min_len)
+    num_to_cell = {v: k for k, v in numbers.items()}
+
+    def slot_num(slot: Slot) -> int:
+        return numbers.get(slot.start, 0)
+
+    across = sorted([s for s in assignment if s.direction == "A"], key=slot_num)
+    down   = sorted([s for s in assignment if s.direction == "D"], key=slot_num)
+
+    print("\nACROSS")
+    for slot in across:
+        word = assignment[slot]
+        score = word_scores.get(word, 0)
+        print(f"  {slot_num(slot):2d}. {word}  ({score})")
+
+    print("\nDOWN")
+    for slot in down:
+        word = assignment[slot]
+        score = word_scores.get(word, 0)
+        print(f"  {slot_num(slot):2d}. {word}  ({score})")
+    print()
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -546,6 +637,8 @@ def main() -> None:
                         help="Backtracking time limit in seconds")
     parser.add_argument("--noise", type=float, default=0.15,
                         help="Scoring noise ±fraction to diversify fills (0=off)")
+    parser.add_argument("--interactive", action="store_true",
+                        help="After solving, enter a feedback loop to ban words and re-solve")
     # Output
     parser.add_argument("--png",     metavar="FILE", default=None)
     parser.add_argument("--cell-px", type=int, default=64)
@@ -577,10 +670,11 @@ def main() -> None:
     print()
 
     # Fill
+    banned: frozenset = frozenset()
     assignment = fill(
         blocked, args.size, word_scores, pos_index, letter_freq, length_index,
         min_len=args.min_word, time_limit=args.time_limit,
-        seed=args.seed, noise=args.noise,
+        seed=args.seed, noise=args.noise, banned=banned,
     )
 
     if assignment is None:
@@ -588,11 +682,46 @@ def main() -> None:
         sys.exit(1)
 
     print("\n" + render_filled_ascii(blocked, args.size, assignment))
+    print_word_list(blocked, args.size, assignment, word_scores, args.min_word)
 
     if args.png:
         render_filled_png(
             blocked, args.size, assignment, args.png, args.cell_px, args.min_word
         )
+
+    # Interactive feedback loop
+    if args.interactive:
+        while True:
+            try:
+                raw = input("Ban words (comma-separated, blank to finish): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not raw:
+                break
+
+            new_bans = {w.strip().upper() for w in raw.split(",") if w.strip()}
+            banned = banned | frozenset(new_bans)
+            print(f"Banned so far: {sorted(banned)}\n")
+
+            assignment = fill(
+                blocked, args.size, word_scores, pos_index, letter_freq, length_index,
+                min_len=args.min_word, time_limit=args.time_limit,
+                seed=args.seed, noise=args.noise, banned=banned,
+            )
+
+            if assignment is None:
+                print("Could not find a complete fill with these bans — try banning fewer words.")
+                continue
+
+            print("\n" + render_filled_ascii(blocked, args.size, assignment))
+            print_word_list(blocked, args.size, assignment, word_scores, args.min_word)
+
+            if args.png:
+                render_filled_png(
+                    blocked, args.size, assignment, args.png, args.cell_px, args.min_word
+                )
+                print(f"(PNG updated)")
 
 
 if __name__ == "__main__":
