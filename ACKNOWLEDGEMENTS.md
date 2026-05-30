@@ -1,6 +1,15 @@
 # Acknowledgements
 
-This project builds on a body of work in constraint satisfaction, crossword construction AI, and open wordlist curation. We are grateful to the following.
+This project builds on a body of work in constraint satisfaction, crossword construction AI, open wordlist curation, and original puzzle design. We are grateful to the following.
+
+---
+
+## Snakes & Ladders puzzle format
+
+**Eric Berlin**
+https://ericberlin.com
+
+The Snakes & Ladders puzzle format (implemented in `snakes_ladders/`) is directly inspired by Eric Berlin's *Jelly Roll* puzzle. In Jelly Roll, two vertical word ladders are interleaved into a continuous braid; snakes wind between the two ladders, taking alternating pairs of letters from each. Eric Berlin is the originator of this puzzle type. His puzzles are a masterclass in cryptic and constructional word play — we are grateful to him for the inspiration.
 
 ---
 

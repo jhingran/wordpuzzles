@@ -18,8 +18,8 @@ import os
 import sys
 from pathlib import Path
 
-CLUE_BANK_FILE = Path("clues_with_answers.txt")
-APPROVED_FILE = Path("claude_created_clues.txt")
+CLUE_BANK_FILE = Path(__file__).parent / "clues_with_answers.txt"
+APPROVED_FILE = Path(__file__).parent / "claude_created_clues.txt"
 MODEL = "claude-opus-4-7"
 
 SYSTEM_PROMPT = """\

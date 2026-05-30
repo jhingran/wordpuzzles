@@ -1,8 +1,12 @@
 # British Crossword Grid Generator & Filler
 
-A Python tool for generating valid British-style crossword grids and filling them with words from a quality-scored word list.
+A Python toolkit for word puzzle generation and cluing.
 
-See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for the wordlist source and the papers this project's algorithms are based on.
+- `cryptic/` — British-style crossword grid generator, CSP filler, and cryptic clue generator
+- `snakes_ladders/` — Snakes & Ladders word puzzle (inspired by Eric Berlin's Jelly Roll)
+- `wordlist.dict` — shared quality-scored word list (252k entries)
+
+See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for wordlist source, algorithm papers, and puzzle inspiration credits.
 
 ## Requirements
 

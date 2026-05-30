@@ -31,7 +31,7 @@ WORDLIST_URL = (
     "https://raw.githubusercontent.com/Crossword-Nexus/"
     "collaborative-word-list/main/xwordlist.dict"
 )
-DEFAULT_WORDLIST = Path(__file__).parent / "wordlist.dict"
+DEFAULT_WORDLIST = Path(__file__).parent.parent / "wordlist.dict"
 
 Cell = tuple[int, int]
 
