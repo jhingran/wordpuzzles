@@ -6,6 +6,7 @@ A Python tool for generating valid British-style crossword grids and filling the
 
 - Python 3.10+
 - Pillow (`pip install Pillow`)
+- anthropic (`pip install anthropic`) — only for `clue_gen.py`
 
 ## Quick start
 
@@ -17,6 +18,13 @@ python3 grid_gen.py -n 15 --seed 42 -e 12 --improve --numbers --png grid.png
 **Generate and fill a grid:**
 ```bash
 python3 filler.py -n 15 --seed 400 -e 12 --improve --png filled.png
+```
+
+**Generate cryptic clues interactively (requires Claude API key):**
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+python3 clue_gen.py INTEGRAND EXQUISITE    # clue specific words
+python3 clue_gen.py                        # prompts for words one at a time
 ```
 
 ---
@@ -250,3 +258,54 @@ SOLVED — 0.04s, 36 nodes explored
 ```
 
 The solver almost never needs to backtrack thanks to MRV + forward checking — most grids solve in under 0.1 seconds with one node visited per slot.
+
+---
+
+## Cryptic clue generator (`clue_gen.py`)
+
+Once you have a filled grid, use `clue_gen.py` to generate and refine cryptic clues interactively with Claude.
+
+### Setup
+
+```bash
+pip install anthropic
+export ANTHROPIC_API_KEY=sk-ant-...   # your key from console.anthropic.com
+```
+
+### Usage
+
+```bash
+# Clue specific words (e.g. from your filled grid)
+python3 clue_gen.py INTEGRAND EXQUISITE ENAMELING
+
+# Or enter words interactively
+python3 clue_gen.py
+```
+
+### How the loop works
+
+1. Claude generates 3 candidate clues using different techniques (anagram, charade, hidden word, etc.)
+2. You give feedback in plain English — Claude refines based on your notes
+3. Repeat until you're happy
+4. `save <clue text>` to append the approved clue to `claude_created_clues.txt`
+5. `next` to move to the next word, `quit` to exit
+
+### Example session
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Word: INTEGRAND  (9 letters)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Claude: [generates 3 clues...]
+
+You: I like the anagram one but the surface is too obvious
+Claude: [refines...]
+
+You: love it — save Maths expression recalculates new gradient (9)
+  → Saved to claude_created_clues.txt
+
+You: next
+```
+
+The clue bank in `clues_with_answers.txt` is automatically loaded as examples so Claude learns your style. Approved clues accumulate in `claude_created_clues.txt`.
