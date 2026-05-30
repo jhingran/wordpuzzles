@@ -2,6 +2,8 @@
 
 A Python tool for generating valid British-style crossword grids and filling them with words from a quality-scored word list.
 
+See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for the wordlist source and the papers this project's algorithms are based on.
+
 ## Requirements
 
 - Python 3.10+
