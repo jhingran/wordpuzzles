@@ -560,22 +560,44 @@ def generate_puzzle(
                 snakes = solve_cross(l1, l2, frozenset(range(n)), frozenset(range(n)), [], pair_deadline)
 
             if snakes is not None:
+                all_words_list = l1_words + l2_words + [s.word for s in snakes]
+                all_words_set  = set(all_words_list)
+
+                # No duplicate words anywhere in the puzzle
+                if len(all_words_set) != len(all_words_list):
+                    print("(duplicate words)–")
+                    continue
+
+                # No word is a simple plural of another (CHART/CHARTS, etc.)
+                def _is_plain_plural(a: str, b: str) -> bool:
+                    return a == b + 'S' or a == b + 'ES'
+                if any(
+                    _is_plain_plural(w1, w2) or _is_plain_plural(w2, w1)
+                    for i, w1 in enumerate(all_words_list)
+                    for w2 in all_words_list[i + 1:]
+                ):
+                    print("(plural pair)–")
+                    continue
+
+                # No snake word repeats a ladder word (belt-and-suspenders after dedup)
                 ladder_set = set(l1_words + l2_words)
                 snake_set  = {s.word for s in snakes}
                 if ladder_set & snake_set:
                     print("(word overlap)–")
                     continue
+
                 # Reject if too many snakes are 3 letters (prefer 4-5 letter snakes)
                 short_count = sum(1 for s in snakes if len(s.word) <= 3)
                 if short_count > max_short_snakes:
                     print(f"(too many short snakes: {short_count})–")
                     continue
+
                 # Check theme-word count
-                all_puzzle_words = ladder_set | snake_set
-                included = [w for w in include_words if w in all_puzzle_words]
+                included = [w for w in include_words if w in all_words_set]
                 if len(included) < min_included:
                     print(f"(only {len(included)}/{min_included} theme words)–")
                     continue
+
                 tag = f"  theme: {', '.join(included)}" if included else ""
                 print(f"found!{tag}")
                 return l1_words, l2_words, snakes
@@ -1155,6 +1177,18 @@ def main() -> None:
     if args.cmd == "check":
         l1w = [w.upper() for w in args.ladder1.split()]
         l2w = [w.upper() for w in args.ladder2.split()]
+        # Validate ladder words before searching
+        all_ladder = l1w + l2w
+        if len(set(all_ladder)) != len(all_ladder):
+            print("Error: duplicate words in ladders.", file=sys.stderr)
+            sys.exit(1)
+        def _is_plain_plural(a: str, b: str) -> bool:
+            return a == b + 'S' or a == b + 'ES'
+        for i, w1 in enumerate(all_ladder):
+            for w2 in all_ladder[i + 1:]:
+                if _is_plain_plural(w1, w2) or _is_plain_plural(w2, w1):
+                    print(f"Error: '{w1}' and '{w2}' are a plural pair.", file=sys.stderr)
+                    sys.exit(1)
         snakes = check_puzzle(l1w, l2w, word_scores, args.min_snake, args.max_snake,
                               args.time_limit, noncrossing=not args.crossing)
         if snakes:
