@@ -800,11 +800,7 @@ def draw_puzzle_image(
 
     img_h = TOP + max(N * cell, panel_h) + PAD
 
-    SNAKE_COLORS = [
-        '#C1121F', '#2D6A4F', '#1D3557', '#7B2D8B', '#E76F51',
-        '#0077B6', '#8B5E3C', '#6D6875', '#2B9348', '#9B2226',
-        '#F4A261', '#3A0CA3',
-    ]
+    SNAKE_COLORS = ['#BBBBBB'] * 12   # light grey so solvers can write over the paths
 
     img  = Image.new('RGB', (img_w, img_h), '#F8F7F2')
     draw = ImageDraw.Draw(img)
