@@ -514,9 +514,15 @@ def generate_puzzle(
                 snakes = solve_cross(l1, l2, frozenset(range(n)), frozenset(range(n)), [], pair_deadline)
 
             if snakes is not None:
-                print("found!")
-                return l1_words, l2_words, snakes
-            print("–")
+                ladder_words = {w for w in l1_words + l2_words}
+                snake_words  = {s.word for s in snakes}
+                if ladder_words & snake_words:
+                    print("(word overlap)–")
+                else:
+                    print("found!")
+                    return l1_words, l2_words, snakes
+            else:
+                print("–")
 
     return None
 
