@@ -99,6 +99,100 @@ class Snake:
         return [p for c in self.chunks if c.source == 'L2' for p in c.positions()]
 
 
+# ── Non-crossing search ───────────────────────────────────────────────────────
+
+def find_noncrossing_snakes(
+    l1: list[str],
+    l2: list[str],
+    l1_ptr: int,       # next L1 position to consume (0-based)
+    l2_ptr: int,       # next L2 position to consume (0-based)
+    word_scores: dict[str, int],
+    snake_next: dict[str, set[str]],
+    min_len: int,
+    max_len: int,
+    deadline: float,
+):
+    """
+    Generator: yields non-crossing Snakes starting at l1_ptr / l2_ptr.
+
+    "Non-crossing" means every snake uses a single contiguous forward block
+    from L1 (L1[l1_ptr..l1_ptr+m-1]) and a single contiguous forward block
+    from L2 (L2[l2_ptr..l2_ptr+k-1]).  Both blocks may be sub-divided into
+    multiple chunks that alternate in the word, but the ladder positions are
+    always increasing — no jumps, no backward reads, no crossing.
+
+    The two pointers advance only forward, so consecutive snakes tile both
+    ladders left-to-right in the same order on each side.
+    """
+    n1, n2 = len(l1), len(l2)
+
+    def rec(
+        prefix: str,
+        cur_src: str,
+        l1_p: int,        # next L1 position to consume
+        l2_p: int,        # next L2 position to consume
+        l1_used: bool,
+        l2_used: bool,
+        chunks: list[Chunk],
+        chunk_start: int,
+        chunk_len: int,
+    ):
+        if time.time() > deadline:
+            return
+
+        if len(prefix) >= min_len and prefix in word_scores and l1_used and l2_used:
+            yield Snake(tuple(chunks), prefix)
+
+        if len(prefix) >= max_len:
+            return
+
+        valid_next = snake_next.get(prefix, set())
+        if not valid_next:
+            return
+
+        if cur_src == 'L1':
+            # Option A: take next L1 letter (extend current chunk)
+            if l1_p < n1 and l1[l1_p] in valid_next:
+                c = l1[l1_p]
+                new_chunk = Chunk('L1', chunk_start, chunk_len + 1, True)
+                yield from rec(prefix + c, 'L1', l1_p + 1, l2_p, True, l2_used,
+                               chunks[:-1] + [new_chunk], chunk_start, chunk_len + 1)
+            # Option B: switch to L2 (start new chunk)
+            if l2_p < n2 and l2[l2_p] in valid_next:
+                c = l2[l2_p]
+                new_chunk = Chunk('L2', l2_p, 1, True)
+                yield from rec(prefix + c, 'L2', l1_p, l2_p + 1, l1_used, True,
+                               chunks + [new_chunk], l2_p, 1)
+        else:
+            # Option A: take next L2 letter (extend current chunk)
+            if l2_p < n2 and l2[l2_p] in valid_next:
+                c = l2[l2_p]
+                new_chunk = Chunk('L2', chunk_start, chunk_len + 1, True)
+                yield from rec(prefix + c, 'L2', l1_p, l2_p + 1, l1_used, True,
+                               chunks[:-1] + [new_chunk], chunk_start, chunk_len + 1)
+            # Option B: switch to L1 (start new chunk)
+            if l1_p < n1 and l1[l1_p] in valid_next:
+                c = l1[l1_p]
+                new_chunk = Chunk('L1', l1_p, 1, True)
+                yield from rec(prefix + c, 'L1', l1_p + 1, l2_p, True, l2_used,
+                               chunks + [new_chunk], l1_p, 1)
+
+    # Try starting on L1 then L2
+    for start_src, start_ptr, start_chars in [('L1', l1_ptr, l1), ('L2', l2_ptr, l2)]:
+        if start_ptr >= (n1 if start_src == 'L1' else n2):
+            continue
+        c0 = start_chars[start_ptr]
+        if c0 not in snake_next.get('', set()):
+            continue
+        init_chunk = Chunk(start_src, start_ptr, 1, True)
+        if start_src == 'L1':
+            yield from rec(c0, 'L1', l1_ptr + 1, l2_ptr, True, False,
+                           [init_chunk], l1_ptr, 1)
+        else:
+            yield from rec(c0, 'L2', l1_ptr, l2_ptr + 1, False, True,
+                           [init_chunk], l2_ptr, 1)
+
+
 # ── Core search: find snakes for fixed ladders ────────────────────────────────
 
 def find_snakes(
@@ -220,10 +314,14 @@ def check_puzzle(
     min_snake: int = 3,
     max_snake: int = 12,
     time_limit: float = 30.0,
+    noncrossing: bool = True,
 ) -> list[Snake] | None:
     """
     Given ladder words, find snakes that cover every position exactly once.
-    Uses backtracking with letter-indexed pruning.
+
+    noncrossing=True (default): each snake uses a contiguous forward block
+    from each ladder; snakes tile both ladders in the same left-to-right order.
+    noncrossing=False: snakes may jump anywhere (crossing allowed).
     """
     l1 = list(''.join(l1_words))
     l2 = list(''.join(l2_words))
@@ -239,42 +337,58 @@ def check_puzzle(
     rng = random.Random(0)
     deadline = time.time() + time_limit
 
-    def solve(
-        l1_avail: frozenset[int],
-        l2_avail: frozenset[int],
-        committed: list[Snake],
-    ) -> list[Snake] | None:
-        if time.time() > deadline:
+    if noncrossing:
+        def solve(l1_ptr: int, l2_ptr: int, committed: list[Snake]) -> list[Snake] | None:
+            if time.time() > deadline:
+                return None
+            if l1_ptr >= n and l2_ptr >= n:
+                return committed
+            if l1_ptr >= n or l2_ptr >= n:
+                return None  # one side exhausted, can't form valid snake
+            for snake in find_noncrossing_snakes(
+                l1, l2, l1_ptr, l2_ptr,
+                word_scores, snake_next, min_snake, max_snake, deadline,
+            ):
+                new_l1_ptr = max(snake.l1_positions()) + 1
+                new_l2_ptr = max(snake.l2_positions()) + 1
+                result = solve(new_l1_ptr, new_l2_ptr, committed + [snake])
+                if result is not None:
+                    return result
             return None
-        if not l1_avail and not l2_avail:
-            return committed
+        return solve(0, 0, [])
 
-        # Anchor: smallest uncovered L1 position (or L2 if L1 exhausted)
-        if l1_avail:
-            anchor_src, anchor_pos = 'L1', min(l1_avail)
-        else:
-            anchor_src, anchor_pos = 'L2', min(l2_avail)
-
-        tried = 0
-        for snake in find_snakes(
-            l1, l2, l1_avail, l2_avail,
-            word_scores, snake_next,
-            min_snake, max_snake,
-            anchor_src, anchor_pos,
-            rng, deadline,
-        ):
-            tried += 1
-            if tried > 50:
-                break
-            new_l1 = l1_avail - frozenset(snake.l1_positions())
-            new_l2 = l2_avail - frozenset(snake.l2_positions())
-            result = solve(new_l1, new_l2, committed + [snake])
-            if result is not None:
-                return result
-
-        return None
-
-    return solve(frozenset(range(n)), frozenset(range(n)), [])
+    else:
+        def solve_crossing(
+            l1_avail: frozenset[int],
+            l2_avail: frozenset[int],
+            committed: list[Snake],
+        ) -> list[Snake] | None:
+            if time.time() > deadline:
+                return None
+            if not l1_avail and not l2_avail:
+                return committed
+            if l1_avail:
+                anchor_src, anchor_pos = 'L1', min(l1_avail)
+            else:
+                anchor_src, anchor_pos = 'L2', min(l2_avail)
+            tried = 0
+            for snake in find_snakes(
+                l1, l2, l1_avail, l2_avail,
+                word_scores, snake_next,
+                min_snake, max_snake,
+                anchor_src, anchor_pos,
+                rng, deadline,
+            ):
+                tried += 1
+                if tried > 50:
+                    break
+                new_l1 = l1_avail - frozenset(snake.l1_positions())
+                new_l2 = l2_avail - frozenset(snake.l2_positions())
+                result = solve_crossing(new_l1, new_l2, committed + [snake])
+                if result is not None:
+                    return result
+            return None
+        return solve_crossing(frozenset(range(n)), frozenset(range(n)), [])
 
 
 # ── Generator ─────────────────────────────────────────────────────────────────
@@ -289,6 +403,7 @@ def generate_puzzle(
     max_l1_trials: int = 50,
     time_limit: float = 120.0,
     seed: int = 42,
+    noncrossing: bool = True,
 ) -> tuple[list[str], list[str], list[Snake]] | None:
     rng = random.Random(seed)
     deadline = time.time() + time_limit
@@ -316,11 +431,61 @@ def generate_puzzle(
 
     rng2 = random.Random(seed + 1)
 
-    # Time budget per (L1, L2) pair — caps backtracking so we try many pairs.
-    total_pairs = max_l1_trials * 5
-    per_pair_secs = max(0.5, (deadline - time.time()) / total_pairs)
+    # Non-crossing solve: just two integer pointers, no frozensets needed.
+    def solve_nc(l1: list[str], l2: list[str], l1_ptr: int, l2_ptr: int,
+                 committed: list[Snake], pair_deadline: float) -> list[Snake] | None:
+        n = len(l1)
+        if time.time() > pair_deadline:
+            return None
+        if l1_ptr >= n and l2_ptr >= n:
+            return committed
+        if l1_ptr >= n or l2_ptr >= n:
+            return None
+        for snake in find_noncrossing_snakes(
+            l1, l2, l1_ptr, l2_ptr,
+            word_scores, snake_next, min_snake, max_snake, pair_deadline,
+        ):
+            result = solve_nc(l1, l2, max(snake.l1_positions()) + 1,
+                              max(snake.l2_positions()) + 1,
+                              committed + [snake], pair_deadline)
+            if result is not None:
+                return result
+        return None
 
-    print(f"Generating puzzle (ladder={target_len} letters, {per_pair_secs:.1f}s/pair) …")
+    # Crossing solve: slower fallback (frozenset-based).
+    def solve_cross(l1: list[str], l2: list[str],
+                    l1_avail: frozenset[int], l2_avail: frozenset[int],
+                    committed: list[Snake], pair_deadline: float) -> list[Snake] | None:
+        if time.time() > pair_deadline:
+            return None
+        if not l1_avail and not l2_avail:
+            return committed
+        if l1_avail:
+            anchor_src, anchor_pos = 'L1', min(l1_avail)
+        else:
+            anchor_src, anchor_pos = 'L2', min(l2_avail)
+        tried = 0
+        for snake in find_snakes(
+            l1, l2, l1_avail, l2_avail,
+            word_scores, snake_next, min_snake, max_snake,
+            anchor_src, anchor_pos, rng2, pair_deadline,
+        ):
+            tried += 1
+            if tried > 30:
+                break
+            new_l1 = l1_avail - frozenset(snake.l1_positions())
+            new_l2 = l2_avail - frozenset(snake.l2_positions())
+            result = solve_cross(l1, l2, new_l1, new_l2, committed + [snake], pair_deadline)
+            if result is not None:
+                return result
+        return None
+
+    # Non-crossing is much faster per pair, so give each pair less time.
+    total_pairs = max_l1_trials * 5
+    per_pair_secs = max(0.2 if noncrossing else 0.5, (deadline - time.time()) / total_pairs)
+
+    mode = "non-crossing" if noncrossing else "crossing"
+    print(f"Generating puzzle (ladder={target_len} letters, {mode}, {per_pair_secs:.1f}s/pair) …")
     for trial in range(1, max_l1_trials + 1):
         if time.time() > deadline:
             print("  Time limit reached.")
@@ -342,38 +507,12 @@ def generate_puzzle(
 
             print(f"  [{trial}] L1={' '.join(l1_words)}  L2={' '.join(l2_words)} … ", end="", flush=True)
 
-            def solve(
-                l1_avail: frozenset[int],
-                l2_avail: frozenset[int],
-                committed: list[Snake],
-                max_per_anchor: int = 30,
-            ) -> list[Snake] | None:
-                if time.time() > pair_deadline:
-                    return None
-                if not l1_avail and not l2_avail:
-                    return committed
-                if l1_avail:
-                    anchor_src, anchor_pos = 'L1', min(l1_avail)
-                else:
-                    anchor_src, anchor_pos = 'L2', min(l2_avail)
-                tried = 0
-                for snake in find_snakes(
-                    l1, l2, l1_avail, l2_avail,
-                    word_scores, snake_next,
-                    min_snake, max_snake,
-                    anchor_src, anchor_pos, rng2, pair_deadline,
-                ):
-                    tried += 1
-                    if tried > max_per_anchor:
-                        break
-                    new_l1 = l1_avail - frozenset(snake.l1_positions())
-                    new_l2 = l2_avail - frozenset(snake.l2_positions())
-                    result = solve(new_l1, new_l2, committed + [snake])
-                    if result is not None:
-                        return result
-                return None
+            n = len(l1)
+            if noncrossing:
+                snakes = solve_nc(l1, l2, 0, 0, [], pair_deadline)
+            else:
+                snakes = solve_cross(l1, l2, frozenset(range(n)), frozenset(range(n)), [], pair_deadline)
 
-            snakes = solve(frozenset(range(target_len)), frozenset(range(target_len)), [])
             if snakes is not None:
                 print("found!")
                 return l1_words, l2_words, snakes
@@ -557,6 +696,8 @@ def main() -> None:
     chk.add_argument("--max-snake", type=int, default=12)
     chk.add_argument("--min-score", type=int, default=50)
     chk.add_argument("--time-limit", type=float, default=30.0)
+    chk.add_argument("--crossing", action="store_true",
+                     help="Allow crossing snakes (default: non-crossing)")
 
     gen = sub.add_parser("generate", help="Search for a valid puzzle")
     gen.add_argument("--length", type=int, default=15)
@@ -568,6 +709,8 @@ def main() -> None:
     gen.add_argument("--time-limit", type=float, default=120.0)
     gen.add_argument("--seed", type=int, default=42)
     gen.add_argument("--min-score", type=int, default=50)
+    gen.add_argument("--crossing", action="store_true",
+                     help="Allow crossing snakes (default: non-crossing)")
 
     ver = sub.add_parser("verify", help="Verify a complete puzzle")
     ver.add_argument("ladder1")
@@ -589,7 +732,8 @@ def main() -> None:
     if args.cmd == "check":
         l1w = [w.upper() for w in args.ladder1.split()]
         l2w = [w.upper() for w in args.ladder2.split()]
-        snakes = check_puzzle(l1w, l2w, word_scores, args.min_snake, args.max_snake, args.time_limit)
+        snakes = check_puzzle(l1w, l2w, word_scores, args.min_snake, args.max_snake,
+                              args.time_limit, noncrossing=not args.crossing)
         if snakes:
             display_puzzle(l1w, l2w, snakes)
         else:
@@ -606,6 +750,7 @@ def main() -> None:
             max_l1_trials=args.tries,
             time_limit=args.time_limit,
             seed=args.seed,
+            noncrossing=not args.crossing,
         )
         if result:
             display_puzzle(*result)
