@@ -404,14 +404,30 @@ def generate_puzzle(
     time_limit: float = 120.0,
     seed: int = 42,
     noncrossing: bool = True,
+    include_words: dict[str, str] | None = None,  # word → custom clue (or '')
+    max_short_snakes: int = 2,   # reject puzzles with more than this many 3-letter snakes
 ) -> tuple[list[str], list[str], list[Snake]] | None:
+    include_words = include_words or {}
     rng = random.Random(seed)
     deadline = time.time() + time_limit
+
+    # Augment word_scores with include words not already present
+    word_scores = dict(word_scores)
+    for w in include_words:
+        if w not in word_scores:
+            word_scores[w] = 90   # treat as high-quality word
 
     words_by_len: dict[int, list[str]] = defaultdict(list)
     for word in word_scores:
         if min_ladder_word <= len(word) <= max_ladder_word:
             words_by_len[len(word)].append(word)
+
+    # Include words short enough to be ladder words
+    ladder_includes = [w for w in include_words
+                       if min_ladder_word <= len(w) <= max_ladder_word]
+
+    # Require at least this many theme words to appear in the final puzzle
+    min_included = min(3, len(include_words)) if include_words else 0
 
     def random_seq(target: int) -> list[str] | None:
         words, remaining = [], target
@@ -424,6 +440,26 @@ def generate_puzzle(
             words.append(rng.choice(words_by_len[length]))
             remaining -= length
         return words
+
+    def themed_seq(target: int) -> list[str] | None:
+        """Seed 1-2 include words then fill the rest randomly."""
+        if not ladder_includes:
+            return random_seq(target)
+        for n_inc in range(min(2, len(ladder_includes)), 0, -1):
+            for _ in range(20):
+                chosen = rng.sample(ladder_includes, n_inc)
+                remaining = target - sum(len(w) for w in chosen)
+                if remaining < 0 or (0 < remaining < min_ladder_word):
+                    continue
+                if remaining == 0:
+                    rng.shuffle(chosen)
+                    return chosen
+                filler = random_seq(remaining)
+                if filler:
+                    combined = chosen + filler
+                    rng.shuffle(combined)
+                    return combined
+        return random_seq(target)
 
     print(f"Building prefix index … ", end="", flush=True)
     snake_next = _build_next_letters(word_scores, max_snake)
@@ -441,10 +477,18 @@ def generate_puzzle(
             return committed
         if l1_ptr >= n or l2_ptr >= n:
             return None
+        # Collect up to 40 candidates and sort longest-first so the solver
+        # prefers 4-5 letter snakes over 3-letter ones.
+        candidates = []
         for snake in find_noncrossing_snakes(
             l1, l2, l1_ptr, l2_ptr,
             word_scores, snake_next, min_snake, max_snake, pair_deadline,
         ):
+            candidates.append(snake)
+            if len(candidates) >= 40:
+                break
+        candidates.sort(key=lambda s: len(s.word), reverse=True)
+        for snake in candidates:
             result = solve_nc(l1, l2, max(snake.l1_positions()) + 1,
                               max(snake.l2_positions()) + 1,
                               committed + [snake], pair_deadline)
@@ -491,13 +535,15 @@ def generate_puzzle(
             print("  Time limit reached.")
             break
 
-        l1_words = random_seq(target_len)
+        # Use themed sampling while time/budget allows; pure random as fallback
+        use_theme = bool(include_words) and trial <= max(max_l1_trials * 0.8, 1)
+        l1_words = themed_seq(target_len) if use_theme else random_seq(target_len)
         if not l1_words:
             continue
         for _ in range(5):
             if time.time() > deadline:
                 break
-            l2_words = random_seq(target_len)
+            l2_words = themed_seq(target_len) if use_theme else random_seq(target_len)
             if not l2_words:
                 continue
 
@@ -514,13 +560,25 @@ def generate_puzzle(
                 snakes = solve_cross(l1, l2, frozenset(range(n)), frozenset(range(n)), [], pair_deadline)
 
             if snakes is not None:
-                ladder_words = {w for w in l1_words + l2_words}
-                snake_words  = {s.word for s in snakes}
-                if ladder_words & snake_words:
+                ladder_set = set(l1_words + l2_words)
+                snake_set  = {s.word for s in snakes}
+                if ladder_set & snake_set:
                     print("(word overlap)–")
-                else:
-                    print("found!")
-                    return l1_words, l2_words, snakes
+                    continue
+                # Reject if too many snakes are 3 letters (prefer 4-5 letter snakes)
+                short_count = sum(1 for s in snakes if len(s.word) <= 3)
+                if short_count > max_short_snakes:
+                    print(f"(too many short snakes: {short_count})–")
+                    continue
+                # Check theme-word count
+                all_puzzle_words = ladder_set | snake_set
+                included = [w for w in include_words if w in all_puzzle_words]
+                if len(included) < min_included:
+                    print(f"(only {len(included)}/{min_included} theme words)–")
+                    continue
+                tag = f"  theme: {', '.join(included)}" if included else ""
+                print(f"found!{tag}")
+                return l1_words, l2_words, snakes
             else:
                 print("–")
 
@@ -559,6 +617,325 @@ def display_puzzle(
         labels = '  +  '.join(_chunk_label(c) for c in snake.chunks)
         print(f"    {snake.word:<16}  ←  {labels}")
     print(f"\n{bar}\n")
+
+
+# ── Puzzle image ─────────────────────────────────────────────────────────────
+
+def draw_puzzle_image(
+    l1_words: list[str],
+    l2_words: list[str],
+    snakes: list[Snake],
+    output_path: str,
+    *,
+    solved: bool = True,
+    clues: dict[str, str] | None = None,
+    cell: int = 52,
+    gap: int = 70,
+) -> None:
+    """
+    Render the puzzle as a PNG.
+
+    solved=True  → fill letters into cells (solution image).
+    solved=False → blank cells (puzzle image).
+    clues        → dict word→definition; when provided, adds a clue panel
+                   to the right of the ladders.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        print("Error: Pillow not installed.  pip install Pillow", file=sys.stderr)
+        return
+
+    N = len(''.join(l1_words))
+
+    RAIL    = 5
+    PAD     = 40
+    TITLE_H = 44
+    LABEL_H = 26
+    TOP     = PAD + TITLE_H + LABEL_H
+    LINE_W  = 3
+
+    l1_x  = PAD
+    l2_x  = PAD + cell + gap
+    l1_cx = l1_x + cell // 2
+    l2_cx = l2_x + cell // 2
+
+    # Clue panel sizing (right of ladders, only when clues provided)
+    PANEL_GAP  = 28
+    PANEL_W    = 210
+    SECTION_H  = 20   # px per section header
+    CLUE_H     = 17   # px per clue line
+    SECTION_SP = 10   # extra gap before each section header
+
+    base_w = l2_x + cell + PAD
+    img_w  = base_w + PANEL_GAP + PANEL_W if clues is not None else base_w
+
+    panel_lines = 0
+    if clues is not None:
+        panel_lines += 3 * (SECTION_H + SECTION_SP)                   # 3 headers
+        panel_lines += (len(l1_words) + len(l2_words)) * CLUE_H
+        panel_lines += len(snakes) * CLUE_H
+    panel_h = panel_lines
+
+    img_h = TOP + max(N * cell, panel_h) + PAD
+
+    SNAKE_COLORS = [
+        '#C1121F', '#2D6A4F', '#1D3557', '#7B2D8B', '#E76F51',
+        '#0077B6', '#8B5E3C', '#6D6875', '#2B9348', '#9B2226',
+        '#F4A261', '#3A0CA3',
+    ]
+
+    img  = Image.new('RGB', (img_w, img_h), '#F8F7F2')
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int):
+        for path in [
+            '/System/Library/Fonts/Helvetica.ttc',
+            '/System/Library/Fonts/Arial.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                pass
+        return ImageFont.load_default()
+
+    f_title  = _font(20)
+    f_label  = _font(14)
+    f_marker = _font(11)
+    f_legend = _font(13)
+
+    def _cy(row: int) -> int:
+        return TOP + row * cell + cell // 2
+
+    def _cx(side: str) -> int:
+        return l1_cx if side == 'L1' else l2_cx
+
+    def _catmull_rom(points, steps: int = 30):
+        """Smooth interpolating curve through all points (C1 continuous, like PowerPoint)."""
+        if len(points) == 1:
+            return [points[0]]
+        # Phantom endpoints mirror the first/last segment so the curve starts/ends
+        # tangent to the first/last segment direction.
+        ext = [
+            (2*points[0][0] - points[1][0], 2*points[0][1] - points[1][1]),
+            *points,
+            (2*points[-1][0] - points[-2][0], 2*points[-1][1] - points[-2][1]),
+        ]
+        out = []
+        for i in range(1, len(ext) - 2):
+            p0, p1, p2, p3 = ext[i-1], ext[i], ext[i+1], ext[i+2]
+            for j in range(steps):
+                t = j / steps
+                t2, t3 = t*t, t*t*t
+                x = 0.5*(2*p1[0] + (-p0[0]+p2[0])*t + (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2 + (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3)
+                y = 0.5*(2*p1[1] + (-p0[1]+p2[1])*t + (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2 + (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)
+                out.append((x, y))
+        out.append(points[-1])
+        return out
+
+    # ── Title & labels ────────────────────────────────────────────────────────
+    draw.text((img_w // 2, PAD + TITLE_H // 2),
+              'SNAKES & LADDERS', fill='#1A1A2E', font=f_title, anchor='mm')
+    draw.text((l1_cx, PAD + TITLE_H + LABEL_H // 2),
+              'LADDER 1', fill='#1A1A2E', font=f_label, anchor='mm')
+    draw.text((l2_cx, PAD + TITLE_H + LABEL_H // 2),
+              'LADDER 2', fill='#1A1A2E', font=f_label, anchor='mm')
+
+    # ── Ladders — open top & bottom, interior rungs only ─────────────────────
+    for lx in (l1_x, l2_x):
+        # White cell backgrounds
+        for row in range(N):
+            draw.rectangle([lx, TOP + row * cell, lx + cell, TOP + (row + 1) * cell],
+                           fill='white')
+        # Interior rungs (horizontal bars between cells, not at top or bottom)
+        for row in range(1, N):
+            y = TOP + row * cell
+            draw.line([(lx, y), (lx + cell, y)], fill='#555555', width=1)
+        # Vertical rails — open-ended (no caps)
+        draw.line([(lx,        TOP), (lx,        TOP + N * cell)], fill='#222222', width=RAIL)
+        draw.line([(lx + cell, TOP), (lx + cell, TOP + N * cell)], fill='#222222', width=RAIL)
+
+    # ── Snake paths — single Catmull-Rom spline per snake (fully smooth) ────────
+    for si, snake in enumerate(snakes):
+        color = SNAKE_COLORS[si % len(SNAKE_COLORS)]
+
+        # Collect cell-centre waypoints in word order
+        waypoints = []
+        for chunk in snake.chunks:
+            cx = _cx(chunk.source)
+            for p in chunk.positions():
+                waypoints.append((cx, _cy(p)))
+
+        # One smooth interpolating curve through every waypoint
+        curve = _catmull_rom(waypoints)
+        for k in range(len(curve) - 1):
+            draw.line([curve[k], curve[k + 1]], fill=color, width=LINE_W)
+
+        # Numbered start marker
+        sx, sy = waypoints[0]
+        R = 9
+        draw.ellipse([sx - R, sy - R, sx + R, sy + R], fill=color, outline='white', width=1)
+        draw.text((sx, sy), str(si + 1), fill='white', font=f_marker, anchor='mm')
+
+    # ── Letters — solution only ───────────────────────────────────────────────
+    if solved:
+        l1_letters = list(''.join(l1_words))
+        l2_letters = list(''.join(l2_words))
+        f_letter = _font(28)
+        for row in range(N):
+            for letter, cx in [(l1_letters[row], l1_cx), (l2_letters[row], l2_cx)]:
+                x, y = cx, _cy(row)
+                draw.text((x, y), letter, fill='white', font=f_letter, anchor='mm',
+                          stroke_width=4, stroke_fill='white')
+                draw.text((x, y), letter, fill='#1A1A2E', font=f_letter, anchor='mm',
+                          stroke_width=1, stroke_fill='#1A1A2E')
+
+    # ── Clue panel — puzzle only ──────────────────────────────────────────────
+    if clues is not None:
+        px   = base_w + PANEL_GAP   # left edge of panel text
+        py   = TOP                  # start aligned with first cell
+        INK  = '#1A1A2E'
+        f_sec = _font(13)
+        f_clu = _font(11)
+
+        def _clue_line(word: str, index: int, length: int) -> None:
+            nonlocal py
+            marker = f"{'①②③④⑤⑥⑦⑧⑨⑩'[index]}" if index < 10 else f"{index+1}."
+            defn   = clues.get(word.upper(), "")
+            text   = f"{marker} ({length}) {defn}"
+            # Simple word-wrap at ~34 chars
+            words_q = text.split()
+            line, line2 = "", ""
+            for w in words_q:
+                if not line:
+                    line = w
+                elif len(line) + 1 + len(w) <= 34:
+                    line += " " + w
+                else:
+                    line2 += (" " if line2 else "") + w
+            draw.text((px, py), line, fill=INK, font=f_clu, anchor='lm')
+            py += CLUE_H
+            if line2:
+                draw.text((px + 12, py), line2, fill=INK, font=f_clu, anchor='lm')
+                py += CLUE_H
+
+        def _section(title: str) -> None:
+            nonlocal py
+            py += SECTION_SP
+            draw.text((px, py), title, fill=INK, font=f_sec, anchor='lm')
+            py += SECTION_H
+
+        _section("LADDER 1")
+        for i, w in enumerate(l1_words):
+            _clue_line(w, i, len(w))
+
+        _section("LADDER 2")
+        for i, w in enumerate(l2_words):
+            _clue_line(w, i, len(w))
+
+        _section("SNAKES")
+        for i, snake in enumerate(snakes):
+            _clue_line(snake.word, i, len(snake.word))
+
+    img.save(output_path)
+    print(f"  → Saved: {output_path}")
+
+
+# ── Include-word parser ───────────────────────────────────────────────────────
+
+def _parse_include(s: str) -> dict[str, str]:
+    """
+    Parse --include string into {WORD: clue} dict.
+
+    Format: semicolon-separated entries, each either:
+      WORD: clue text
+      WORD          (clue left blank; Claude API will generate it)
+
+    Example:
+      "RENU: my wife; POPPY: her nickname for me; JUNE; ARNIE"
+    """
+    result: dict[str, str] = {}
+    for entry in s.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" in entry:
+            word, clue = entry.split(":", 1)
+            result[word.strip().upper()] = clue.strip()
+        else:
+            result[entry.upper()] = ""
+    return result
+
+
+# ── Clue generation ──────────────────────────────────────────────────────────
+
+def generate_clues(
+    l1_words: list[str],
+    l2_words: list[str],
+    snakes: list[Snake],
+    overrides: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """
+    Generate simple one-line definitions via Claude API.
+    Words in `overrides` that have non-empty clues skip the API call.
+    Returns {} silently if ANTHROPIC_API_KEY is unset or anthropic not installed.
+    """
+    import os
+    overrides = overrides or {}
+    all_words = l1_words + l2_words + [s.word for s in snakes]
+
+    # Start with any user-supplied clues
+    clues: dict[str, str] = {}
+    for w, clue in overrides.items():
+        if clue:
+            clues[w.upper()] = clue
+
+    # Words that still need API-generated clues
+    need_api = [w for w in all_words if w.upper() not in clues]
+    if not need_api:
+        return clues
+
+    try:
+        import anthropic
+    except ImportError:
+        return clues
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return clues
+
+    client = anthropic.Anthropic(api_key=api_key)
+    word_list = ", ".join(need_api)
+    prompt = (
+        "For each word below write ONE crossword clue of at most 5 words.\n"
+        "Rules:\n"
+        "- Use the single most common meaning only.\n"
+        "- Never use the word 'or'.\n"
+        "- No slashes, no alternatives, no parenthetical notes.\n"
+        "- No leading article (a/an/the).\n"
+        "- Format: WORD: clue  (one per line, nothing else)\n\n"
+        + word_list
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        for line in resp.content[0].text.strip().splitlines():
+            if ":" in line:
+                w, defn = line.split(":", 1)
+                w = w.strip().upper()
+                if w in {x.upper() for x in all_words}:
+                    defn = defn.strip()
+                    # Strip any trailing " or ..." alternative as a safety net
+                    for sep in (" or ", "/", "; "):
+                        if sep in defn:
+                            defn = defn.split(sep)[0].rstrip(" ,")
+                    clues[w] = defn
+    except Exception:
+        pass
+    return clues
 
 
 # ── Verify ────────────────────────────────────────────────────────────────────
@@ -689,6 +1066,34 @@ def verify_puzzle(
     return True, snake_objs
 
 
+# ── PNG output helper ────────────────────────────────────────────────────────
+
+def _emit_pngs(
+    l1_words: list[str],
+    l2_words: list[str],
+    snakes: list[Snake],
+    base_path: str,
+    include_words: dict[str, str] | None = None,
+) -> None:
+    """Generate solution PNG and puzzle PNG (with clues) from a single --png path."""
+    from pathlib import Path
+    p = Path(base_path)
+    solution_path = str(p.with_stem(p.stem + "_solution"))
+    puzzle_path   = str(p.with_stem(p.stem + "_puzzle"))
+
+    # Solution: letters filled, no clue panel
+    draw_puzzle_image(l1_words, l2_words, snakes, solution_path, solved=True)
+
+    # Clues: user-supplied overrides first, then Claude API for the rest
+    print("  Generating clues … ", end="", flush=True)
+    clues = generate_clues(l1_words, l2_words, snakes, overrides=include_words)
+    print("done" if clues else "no API key — using blank clues")
+
+    # Puzzle: blank cells + clue panel
+    draw_puzzle_image(l1_words, l2_words, snakes, puzzle_path,
+                      solved=False, clues=clues)
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -704,6 +1109,7 @@ def main() -> None:
     chk.add_argument("--time-limit", type=float, default=30.0)
     chk.add_argument("--crossing", action="store_true",
                      help="Allow crossing snakes (default: non-crossing)")
+    chk.add_argument("--png", metavar="FILE", help="Save puzzle image to FILE")
 
     gen = sub.add_parser("generate", help="Search for a valid puzzle")
     gen.add_argument("--length", type=int, default=15)
@@ -717,6 +1123,17 @@ def main() -> None:
     gen.add_argument("--min-score", type=int, default=50)
     gen.add_argument("--crossing", action="store_true",
                      help="Allow crossing snakes (default: non-crossing)")
+    gen.add_argument("--png", metavar="FILE", help="Save puzzle image to FILE")
+    gen.add_argument("--max-short-snakes", type=int, default=2,
+                     help="Reject puzzles with more than this many 3-letter snakes (default: 2)")
+    gen.add_argument(
+        "--include", metavar="WORDS", default="",
+        help=(
+            'Semicolon-separated themed words (with optional clues) to include. '
+            'Format: "WORD: clue text; WORD2: clue; WORD3". '
+            'At least 3 of the provided words will appear in the puzzle.'
+        ),
+    )
 
     ver = sub.add_parser("verify", help="Verify a complete puzzle")
     ver.add_argument("ladder1")
@@ -742,10 +1159,15 @@ def main() -> None:
                               args.time_limit, noncrossing=not args.crossing)
         if snakes:
             display_puzzle(l1w, l2w, snakes)
+            if args.png:
+                _emit_pngs(l1w, l2w, snakes, args.png)
         else:
             print("No valid snake arrangement found within time limit.")
 
     elif args.cmd == "generate":
+        include_words = _parse_include(args.include) if args.include else {}
+        if include_words:
+            print(f"Theme words: {', '.join(include_words)}")
         result = generate_puzzle(
             word_scores,
             target_len=args.length,
@@ -757,9 +1179,13 @@ def main() -> None:
             time_limit=args.time_limit,
             seed=args.seed,
             noncrossing=not args.crossing,
+            include_words=include_words,
+            max_short_snakes=args.max_short_snakes,
         )
         if result:
             display_puzzle(*result)
+            if args.png:
+                _emit_pngs(*result, args.png, include_words=include_words)
         else:
             print("No valid puzzle found. Try a different --seed.")
 
