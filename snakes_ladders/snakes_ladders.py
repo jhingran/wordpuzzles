@@ -115,28 +115,29 @@ def find_noncrossing_snakes(
     """
     Generator: yields non-crossing Snakes starting at l1_ptr / l2_ptr.
 
-    "Non-crossing" means every snake uses a single contiguous forward block
-    from L1 (L1[l1_ptr..l1_ptr+m-1]) and a single contiguous forward block
-    from L2 (L2[l2_ptr..l2_ptr+k-1]).  Both blocks may be sub-divided into
-    multiple chunks that alternate in the word, but the ladder positions are
-    always increasing — no jumps, no backward reads, no crossing.
+    Each snake owns a contiguous block of L1 positions [l1_ptr..l1_end] and
+    L2 positions [l2_ptr..l2_end].  Within those blocks, chunks may run
+    forward (↑ ascending position) OR backward (↓ descending).  A backward
+    chunk of jump-distance k reserves positions [ptr..ptr+k] and reads them
+    in reverse; the block end advances to ptr+k+1.
 
-    The two pointers advance only forward, so consecutive snakes tile both
-    ladders left-to-right in the same order on each side.
+    Consecutive snakes tile both ladders in the same left-to-right order —
+    no two snakes share a position on either ladder.
     """
     n1, n2 = len(l1), len(l2)
 
     def rec(
         prefix: str,
         cur_src: str,
-        l1_p: int,        # next L1 position to consume
-        l2_p: int,        # next L2 position to consume
+        l1_p: int,        # next available L1 position (floor of remaining L1)
+        l2_p: int,        # next available L2 position (floor of remaining L2)
         l1_used: bool,
         l2_used: bool,
         chunks: list[Chunk],
         chunk_start: int,
         chunk_len: int,
     ):
+        """Extend the word while on cur_src in forward mode."""
         if time.time() > deadline:
             return
 
@@ -151,46 +152,144 @@ def find_noncrossing_snakes(
             return
 
         if cur_src == 'L1':
-            # Option A: take next L1 letter (extend current chunk)
+            # Option A: extend L1 forward
             if l1_p < n1 and l1[l1_p] in valid_next:
                 c = l1[l1_p]
                 new_chunk = Chunk('L1', chunk_start, chunk_len + 1, True)
                 yield from rec(prefix + c, 'L1', l1_p + 1, l2_p, True, l2_used,
                                chunks[:-1] + [new_chunk], chunk_start, chunk_len + 1)
-            # Option B: switch to L2 (start new chunk)
+            # Option B: switch to L2 forward
             if l2_p < n2 and l2[l2_p] in valid_next:
                 c = l2[l2_p]
                 new_chunk = Chunk('L2', l2_p, 1, True)
                 yield from rec(prefix + c, 'L2', l1_p, l2_p + 1, l1_used, True,
                                chunks + [new_chunk], l2_p, 1)
+            # Option C: switch to L2 backward (jump k ahead, descend to l2_p)
+            remaining = max_len - len(prefix)
+            for k in range(1, min(remaining, n2 - l2_p)):
+                jump = l2_p + k
+                if l2[jump] not in valid_next:
+                    continue
+                c = l2[jump]
+                new_chunk = Chunk('L2', jump, 1, False)
+                yield from rec_back(prefix + c, 'L2', jump - 1, l2_p,
+                                    l1_p, jump + 1, l1_used, True,
+                                    chunks + [new_chunk], jump, 1)
         else:
-            # Option A: take next L2 letter (extend current chunk)
+            # Option A: extend L2 forward
             if l2_p < n2 and l2[l2_p] in valid_next:
                 c = l2[l2_p]
                 new_chunk = Chunk('L2', chunk_start, chunk_len + 1, True)
                 yield from rec(prefix + c, 'L2', l1_p, l2_p + 1, l1_used, True,
                                chunks[:-1] + [new_chunk], chunk_start, chunk_len + 1)
-            # Option B: switch to L1 (start new chunk)
+            # Option B: switch to L1 forward
             if l1_p < n1 and l1[l1_p] in valid_next:
                 c = l1[l1_p]
                 new_chunk = Chunk('L1', l1_p, 1, True)
                 yield from rec(prefix + c, 'L1', l1_p + 1, l2_p, True, l2_used,
                                chunks + [new_chunk], l1_p, 1)
+            # Option C: switch to L1 backward (jump k ahead, descend to l1_p)
+            remaining = max_len - len(prefix)
+            for k in range(1, min(remaining, n1 - l1_p)):
+                jump = l1_p + k
+                if l1[jump] not in valid_next:
+                    continue
+                c = l1[jump]
+                new_chunk = Chunk('L1', jump, 1, False)
+                yield from rec_back(prefix + c, 'L1', jump - 1, l1_p,
+                                    jump + 1, l2_p, True, l2_used,
+                                    chunks + [new_chunk], jump, 1)
 
-    # Try starting on L1 then L2
-    for start_src, start_ptr, start_chars in [('L1', l1_ptr, l1), ('L2', l2_ptr, l2)]:
-        if start_ptr >= (n1 if start_src == 'L1' else n2):
-            continue
-        c0 = start_chars[start_ptr]
-        if c0 not in snake_next.get('', set()):
-            continue
-        init_chunk = Chunk(start_src, start_ptr, 1, True)
-        if start_src == 'L1':
-            yield from rec(c0, 'L1', l1_ptr + 1, l2_ptr, True, False,
-                           [init_chunk], l1_ptr, 1)
+    def rec_back(
+        prefix: str,
+        back_src: str,
+        cur_pos: int,       # current position descending toward floor
+        floor: int,         # must reach this position before we can switch away
+        l1_p_after: int,    # l1_p to use once this backward chunk is complete
+        l2_p_after: int,    # l2_p to use once this backward chunk is complete
+        l1_used: bool,
+        l2_used: bool,
+        chunks: list[Chunk],
+        chunk_start: int,   # the jump position (highest pos in this chunk)
+        chunk_len: int,
+    ):
+        """
+        Forced descent: consume back_src from cur_pos down to floor, then
+        switch to the other ladder in forward mode.
+        """
+        if time.time() > deadline:
+            return
+
+        back_chars = l1 if back_src == 'L1' else l2
+
+        if cur_pos >= floor:
+            # Still descending — must take the next letter, no choice.
+            if len(prefix) >= max_len:
+                return
+            valid_next = snake_next.get(prefix, set())
+            c = back_chars[cur_pos]
+            if c not in valid_next:
+                return
+            new_chunk = Chunk(back_src, chunk_start, chunk_len + 1, False)
+            yield from rec_back(prefix + c, back_src, cur_pos - 1, floor,
+                                l1_p_after, l2_p_after, l1_used, l2_used,
+                                chunks[:-1] + [new_chunk], chunk_start, chunk_len + 1)
         else:
-            yield from rec(c0, 'L2', l1_ptr, l2_ptr + 1, False, True,
-                           [init_chunk], l2_ptr, 1)
+            # Descent complete — switch to the other ladder in forward mode.
+            if len(prefix) >= min_len and prefix in word_scores and l1_used and l2_used:
+                yield Snake(tuple(chunks), prefix)
+            if len(prefix) >= max_len:
+                return
+            valid_next = snake_next.get(prefix, set())
+            if not valid_next:
+                return
+            fwd_src = 'L2' if back_src == 'L1' else 'L1'
+            fwd_chars = l2 if back_src == 'L1' else l1
+            fwd_p = l2_p_after if back_src == 'L1' else l1_p_after
+            fwd_n = n2 if back_src == 'L1' else n1
+            if fwd_p < fwd_n and fwd_chars[fwd_p] in valid_next:
+                c = fwd_chars[fwd_p]
+                new_chunk = Chunk(fwd_src, fwd_p, 1, True)
+                if fwd_src == 'L1':
+                    yield from rec(prefix + c, 'L1', fwd_p + 1, l2_p_after,
+                                   True, l2_used, chunks + [new_chunk], fwd_p, 1)
+                else:
+                    yield from rec(prefix + c, 'L2', l1_p_after, fwd_p + 1,
+                                   l1_used, True, chunks + [new_chunk], fwd_p, 1)
+
+    # Try starting on L1 or L2, forward or backward
+    valid_first = snake_next.get('', set())
+    for start_src, start_ptr, start_chars, start_n, oth_ptr in [
+        ('L1', l1_ptr, l1, n1, l2_ptr),
+        ('L2', l2_ptr, l2, n2, l1_ptr),
+    ]:
+        if start_ptr >= start_n:
+            continue
+        # Forward start
+        c0 = start_chars[start_ptr]
+        if c0 in valid_first:
+            init_chunk = Chunk(start_src, start_ptr, 1, True)
+            if start_src == 'L1':
+                yield from rec(c0, 'L1', l1_ptr + 1, l2_ptr, True, False,
+                               [init_chunk], l1_ptr, 1)
+            else:
+                yield from rec(c0, 'L2', l1_ptr, l2_ptr + 1, False, True,
+                               [init_chunk], l2_ptr, 1)
+        # Backward start (jump k ahead from start_ptr, descend)
+        for k in range(1, min(max_len, start_n - start_ptr)):
+            jump = start_ptr + k
+            c0 = start_chars[jump]
+            if c0 not in valid_first:
+                continue
+            init_chunk = Chunk(start_src, jump, 1, False)
+            if start_src == 'L1':
+                yield from rec_back(c0, 'L1', jump - 1, l1_ptr,
+                                    jump + 1, l2_ptr, True, False,
+                                    [init_chunk], jump, 1)
+            else:
+                yield from rec_back(c0, 'L2', jump - 1, l2_ptr,
+                                    l1_ptr, jump + 1, False, True,
+                                    [init_chunk], jump, 1)
 
 
 # ── Core search: find snakes for fixed ladders ────────────────────────────────
