@@ -5,13 +5,21 @@ snakes_ladders.py — Snakes & Ladders word puzzle builder.
 Inspired by Eric Berlin's Jelly Roll puzzle (ericberlin.com).
 
 Two vertical LADDERS, each a sequence of stacked words.
-SNAKES wind between the ladders, consuming letters from both in alternating
-pairs — 1 from L1, then 2 from L2, 2 from L1, 2 from L2 ... until both
-ladders are exhausted. Snakes are cut from this continuous braid.
+SNAKES coil around the two ladders.  Each snake is a sequence of
+alternating CHUNKS — one chunk from L1, the next from L2, etc. (or
+starting with L2).  Each chunk is a contiguous run of positions from
+that ladder, in either direction (forward or backward).  Together the
+chunks spell a valid word; together all snakes cover every position on
+both ladders exactly once.
+
+The chunk directions and sizes are completely flexible:
+  L1[1,2] + L2[2,1]  →  4-letter snake (L1 forward, L2 backward)
+  L1[1]   + L2[1,2,3]→  4-letter snake (L1 1-letter, L2 3-letter fwd)
+  L2[3,2,1] + L1[1]  →  4-letter snake (L2 backward, L1 1-letter)
 
 Usage:
   python snakes_ladders.py check "HITCH SENATE BOGUS" "ABATE EMIR EARNEST"
-  python snakes_ladders.py generate --length 15 --seed 42
+  python snakes_ladders.py generate --length 15 --seed 42 --min-score 60
   python snakes_ladders.py verify "HITCH SENATE BOGUS" "ABATE EMIR EARNEST" \\
                                   "HABITAT CHEESE MINARET EARBONE GUSTS"
 """
@@ -21,7 +29,9 @@ from __future__ import annotations
 import argparse
 import random
 import sys
+import time
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 WORDLIST_PATH = Path(__file__).parent.parent / "wordlist.dict"
@@ -47,124 +57,158 @@ def load_wordlist(path: Path, min_score: int = 50) -> dict[str, int]:
     return words
 
 
-# ── Braid mechanics ───────────────────────────────────────────────────────────
-
-def braid_positions(n: int) -> tuple[list[int], list[int]]:
-    """
-    Return (l1_positions, l2_positions) in a braid of length 2n.
-
-    Pattern: start with 1 letter from L1, then alternate 2 from L2 / 2 from L1
-    until both ladders are exhausted.
-
-    For n=16 (even) the braid ends: ... L2(2) L1(1)
-    For n=15 (odd)  the braid ends: ... L1(2) L2(1)
-    """
-    l1_pos: list[int] = []
-    l2_pos: list[int] = []
-    braid_idx = 0
-    l1_idx = l2_idx = 0
-
-    # First letter from L1
-    l1_pos.append(braid_idx)
-    braid_idx += 1
-    l1_idx += 1
-
-    while l1_idx < n or l2_idx < n:
-        for _ in range(2):
-            if l2_idx < n:
-                l2_pos.append(braid_idx)
-                braid_idx += 1
-                l2_idx += 1
-        for _ in range(2):
-            if l1_idx < n:
-                l1_pos.append(braid_idx)
-                braid_idx += 1
-                l1_idx += 1
-
-    return l1_pos, l2_pos
+def _build_next_letters(word_scores: dict[str, int], max_len: int) -> dict[str, set[str]]:
+    """prefix → set of valid next letters ('' = valid first letters)."""
+    nxt: dict[str, set[str]] = defaultdict(set)
+    for word in word_scores:
+        if len(word) <= max_len:
+            for i in range(len(word)):
+                nxt[word[:i]].add(word[i])
+    return nxt
 
 
-def make_braid(l1: list[str], l2: list[str]) -> list[str]:
-    """Interleave two letter sequences into the braid."""
-    n = len(l1)
-    assert len(l2) == n, f"Ladders must be equal length ({len(l1)} vs {len(l2)})"
-    l1_pos, l2_pos = braid_positions(n)
-    braid = [''] * (2 * n)
-    for i, p in enumerate(l1_pos):
-        braid[p] = l1[i]
-    for i, p in enumerate(l2_pos):
-        braid[p] = l2[i]
-    return braid
+# ── Snake representation ──────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Chunk:
+    """One contiguous run of letters from a single ladder."""
+    source: str    # 'L1' or 'L2'
+    start: int     # first position consumed (0-based index into the ladder)
+    length: int    # number of positions consumed
+    forward: bool  # True → start, start+1, …; False → start, start-1, …
+
+    def positions(self) -> list[int]:
+        step = 1 if self.forward else -1
+        return list(range(self.start, self.start + step * self.length, step))
+
+    def letters(self, l1: list[str], l2: list[str]) -> str:
+        src = l1 if self.source == 'L1' else l2
+        return ''.join(src[p] for p in self.positions())
 
 
-def extract_ladders(braid: list[str], n: int) -> tuple[list[str], list[str]]:
-    l1_pos, l2_pos = braid_positions(n)
-    return [braid[p] for p in l1_pos], [braid[p] for p in l2_pos]
+@dataclass(frozen=True)
+class Snake:
+    """A complete snake: alternating chunks that spell a word."""
+    chunks: tuple[Chunk, ...]
+    word: str
+
+    def l1_positions(self) -> list[int]:
+        return [p for c in self.chunks if c.source == 'L1' for p in c.positions()]
+
+    def l2_positions(self) -> list[int]:
+        return [p for c in self.chunks if c.source == 'L2' for p in c.positions()]
 
 
-# ── Word segmentation (DP) ────────────────────────────────────────────────────
+# ── Core search: find snakes for fixed ladders ────────────────────────────────
 
-def best_segment(
-    chars: list[str],
+def find_snakes(
+    l1: list[str],
+    l2: list[str],
+    l1_avail: frozenset[int],
+    l2_avail: frozenset[int],
     word_scores: dict[str, int],
-    min_len: int = 3,
-    max_len: int = 12,
-) -> list[str] | None:
+    snake_next: dict[str, set[str]],
+    min_len: int,
+    max_len: int,
+    anchor_src: str,   # 'L1' or 'L2' — which ladder to anchor on
+    anchor_pos: int,   # position that MUST be covered by this snake
+    rng: random.Random,
+    deadline: float,
+):
     """
-    Find the highest-quality segmentation of chars into valid words.
-    Score = sum of wordlist scores. Returns None if no segmentation exists.
+    Generator: yields Snake objects that include anchor_pos in anchor_src.
+
+    A snake is built letter by letter.  At each step we either:
+      (a) switch to the other ladder (tried first — encourages interleaving), or
+      (b) continue on the current ladder one step in the same direction.
+
+    Letter-indexed pruning: only positions whose letter extends the current
+    word prefix are explored at each switch.
     """
-    n = len(chars)
-    # dp[i] = (best_score, prev_pos, word) for chars[0:i]; None = unreachable
-    dp: list[tuple[float, int, str] | None] = [None] * (n + 1)
-    dp[0] = (0.0, -1, '')
 
-    for end in range(1, n + 1):
-        for start in range(max(0, end - max_len), end):
-            if dp[start] is None:
-                continue
-            length = end - start
-            if length < min_len:
-                continue
-            word = ''.join(chars[start:end])
-            if word in word_scores:
-                score = dp[start][0] + word_scores[word]
-                if dp[end] is None or score > dp[end][0]:
-                    dp[end] = (score, start, word)
+    def rec(
+        prefix: str,
+        cur_src: str,
+        cur_pos: int,
+        cur_dir: int,
+        cur_src_avail: frozenset[int],
+        oth_src: str,
+        oth_avail: frozenset[int],
+        chunks_so_far: list[Chunk],
+        chunk_start: int,
+        chunk_len: int,
+    ):
+        if time.time() > deadline:
+            return
 
-    if dp[n] is None:
-        return None
+        if len(prefix) >= min_len and prefix in word_scores:
+            l1_in = any(c.source == 'L1' for c in chunks_so_far)
+            l2_in = any(c.source == 'L2' for c in chunks_so_far)
+            if l1_in and l2_in:
+                yield Snake(tuple(chunks_so_far), prefix)
 
-    words: list[str] = []
-    pos = n
-    while pos > 0:
-        _, prev, word = dp[pos]  # type: ignore[misc]
-        words.append(word)
-        pos = prev
-    return list(reversed(words))
+        if len(prefix) >= max_len:
+            return
 
+        cur_chars = l1 if cur_src == 'L1' else l2
+        oth_chars = l2 if cur_src == 'L1' else l1
 
-def can_segment(
-    chars: list[str],
-    word_scores: dict[str, int],
-    min_len: int = 3,
-    max_len: int = 7,
-) -> bool:
-    """Quick reachability check — no score tracking, just True/False."""
-    n = len(chars)
-    reachable = [False] * (n + 1)
-    reachable[0] = True
-    for end in range(1, n + 1):
-        for start in range(max(0, end - max_len), end):
-            if not reachable[start]:
-                continue
-            length = end - start
-            if length < min_len:
-                continue
-            if ''.join(chars[start:end]) in word_scores:
-                reachable[end] = True
-                break
-    return reachable[n]
+        valid_next = snake_next.get(prefix, set())
+        if not valid_next:
+            return
+
+        # Option B first: switch to other ladder (encourages interleaving)
+        oth_positions = list(oth_avail)
+        rng.shuffle(oth_positions)
+        oth_by_letter: dict[str, list[int]] = defaultdict(list)
+        for p in oth_positions:
+            oth_by_letter[oth_chars[p]].append(p)
+
+        for c in valid_next:
+            for p in oth_by_letter.get(c, []):
+                for d in (1, -1):
+                    new_chunk = Chunk(oth_src, p, 1, d > 0)
+                    yield from rec(
+                        prefix + c,
+                        oth_src, p, d,
+                        oth_avail - {p},
+                        cur_src, cur_src_avail,
+                        chunks_so_far + [new_chunk],
+                        p, 1,
+                    )
+
+        # Option A second: continue on current ladder
+        next_pos = cur_pos + cur_dir
+        if next_pos in cur_src_avail:
+            c = cur_chars[next_pos]
+            if c in valid_next:
+                new_chunk = Chunk(cur_src, chunk_start,
+                                  chunk_len + 1, cur_dir > 0)
+                yield from rec(
+                    prefix + c,
+                    cur_src, next_pos, cur_dir,
+                    cur_src_avail - {next_pos},
+                    oth_src, oth_avail,
+                    chunks_so_far[:-1] + [new_chunk],
+                    chunk_start, chunk_len + 1,
+                )
+
+    anchor_chars = l1 if anchor_src == 'L1' else l2
+    oth_src = 'L2' if anchor_src == 'L1' else 'L1'
+    anchor_avail = l1_avail if anchor_src == 'L1' else l2_avail
+    oth_avail = l2_avail if anchor_src == 'L1' else l1_avail
+
+    c0 = anchor_chars[anchor_pos]
+    if c0 in snake_next.get('', set()):
+        for d in (1, -1):
+            yield from rec(
+                c0,
+                anchor_src, anchor_pos, d,
+                anchor_avail - {anchor_pos},
+                oth_src, oth_avail,
+                [Chunk(anchor_src, anchor_pos, 1, d > 0)],
+                anchor_pos, 1,
+            )
 
 
 # ── Puzzle checker ────────────────────────────────────────────────────────────
@@ -175,181 +219,65 @@ def check_puzzle(
     word_scores: dict[str, int],
     min_snake: int = 3,
     max_snake: int = 12,
-) -> list[str] | None:
-    """Given ladder words, find the best snake segmentation. Returns None if impossible."""
+    time_limit: float = 30.0,
+) -> list[Snake] | None:
+    """
+    Given ladder words, find snakes that cover every position exactly once.
+    Uses backtracking with letter-indexed pruning.
+    """
     l1 = list(''.join(l1_words))
     l2 = list(''.join(l2_words))
-    if len(l1) != len(l2):
-        print(f"Error: L1={len(l1)} letters, L2={len(l2)} letters — must match.", file=sys.stderr)
+    n = len(l1)
+    if len(l2) != n:
+        print(f"Error: L1={len(l1)} letters, L2={len(l2)} — must match.", file=sys.stderr)
         return None
-    braid = make_braid(l1, l2)
-    return best_segment(braid, word_scores, min_snake, max_snake)
 
+    print(f"Building prefix index … ", end="", flush=True)
+    snake_next = _build_next_letters(word_scores, max_snake)
+    print("done")
 
-# ── Puzzle generator ──────────────────────────────────────────────────────────
+    rng = random.Random(0)
+    deadline = time.time() + time_limit
 
-def _random_word_sequence(
-    words_by_len: dict[int, list[str]],
-    target: int,
-    min_len: int,
-    max_len: int,
-    rng: random.Random,
-) -> list[str] | None:
-    """Random sequence of words whose lengths sum to target."""
-    words: list[str] = []
-    remaining = target
-    while remaining > 0:
-        possible = [l for l in range(min_len, min(max_len, remaining) + 1)
-                    if words_by_len.get(l)]
-        if not possible:
-            return None
-        length = rng.choice(possible)
-        word = rng.choice(words_by_len[length])
-        words.append(word)
-        remaining -= length
-    return words
-
-
-def _build_next_letters(word_scores: dict[str, int], max_len: int) -> dict[str, set[str]]:
-    """
-    For each prefix of a valid word (up to max_len), the set of letters
-    that can legally follow it.  Empty-string key = valid first letters.
-    """
-    nxt: dict[str, set[str]] = defaultdict(set)
-    for word in word_scores:
-        if len(word) > max_len:
-            continue
-        for i in range(len(word)):
-            nxt[word[:i]].add(word[i])
-    return nxt
-
-
-def _csp_solve(
-    l1_chars: list[str],
-    word_scores: dict[str, int],
-    snake_next: dict[str, set[str]],
-    ladder_next: dict[str, set[str]],
-    l1_pos: list[int],
-    l2_pos: list[int],
-    n: int,
-    min_snake: int,
-    max_snake: int,
-    min_ladder: int,
-    max_ladder: int,
-    rng: random.Random,
-    deadline: float,
-) -> tuple[list[str], list[str], list[str]] | None:
-    """
-    Backtracking CSP: given fixed L1, find L2 letters and word cuts
-    such that both ladders segment cleanly and the braid segments into snakes.
-
-    Processes braid positions left to right. At L1 positions the letter is
-    fixed; at L2 positions we try letters from snake_next ∩ ladder_next
-    (the intersection of what can legally extend the current snake prefix
-    and the current L2-word prefix). At every position we also decide
-    whether to commit a word boundary for the snake track and, at L2
-    positions, for the L2-word track.
-    """
-    import time
-
-    l2_chars: list[str] = [''] * n
-    braid_to_l1 = {p: i for i, p in enumerate(l1_pos)}
-    braid_to_l2 = {p: i for i, p in enumerate(l2_pos)}
-    total = 2 * n
-
-    def rec(
-        bp: int,              # braid position
-        sp: str,              # snake prefix
-        snakes: list[str],    # committed snakes
-        lp: str,              # L2-word prefix
-        lwords: list[str],    # committed L2 words
-    ) -> tuple | None:
+    def solve(
+        l1_avail: frozenset[int],
+        l2_avail: frozenset[int],
+        committed: list[Snake],
+    ) -> list[Snake] | None:
         if time.time() > deadline:
             return None
-        if bp == total:
-            # Commit trailing snake word
-            if sp and (sp not in word_scores or len(sp) < min_snake):
-                return None
-            final_snakes = snakes + ([sp] if sp else [])
-            # Commit trailing L2 word
-            if lp and (lp not in word_scores or len(lp) < min_ladder):
-                return None
-            final_lwords = lwords + ([lp] if lp else [])
-            if not final_snakes or not final_lwords:
-                return None
-            return l2_chars[:], final_lwords, final_snakes
+        if not l1_avail and not l2_avail:
+            return committed
 
-        is_l1 = bp in braid_to_l1
-        fixed_letter = l1_chars[braid_to_l1[bp]] if is_l1 else None
-        is_last = (bp == total - 1)
-
-        # Candidate letters: for L1 it's fixed; for L2 take the intersection
-        # of letters that validly extend the snake prefix AND the L2-word prefix.
-        if is_l1:
-            candidates = [fixed_letter]
+        # Anchor: smallest uncovered L1 position (or L2 if L1 exhausted)
+        if l1_avail:
+            anchor_src, anchor_pos = 'L1', min(l1_avail)
         else:
-            s_nexts = snake_next.get(sp, set())
-            l_nexts = ladder_next.get(lp, set())
-            candidates = list(s_nexts & l_nexts)
-            rng.shuffle(candidates)
+            anchor_src, anchor_pos = 'L2', min(l2_avail)
 
-        for c in candidates:
-            new_sp = sp + c
-            new_lp = lp + c if not is_l1 else lp
-
-            if not is_l1:
-                l2_chars[braid_to_l2[bp]] = c
-
-            # Determine what commits are legal here
-            can_commit_snake = (new_sp in word_scores and len(new_sp) >= min_snake)
-            can_cont_snake = (new_sp in snake_next and len(new_sp) < max_snake
-                              and not is_last)
-
-            can_commit_l2 = (not is_l1 and new_lp in word_scores
-                             and len(new_lp) >= min_ladder)
-            can_cont_l2 = (not is_l1 and new_lp in ladder_next
-                           and len(new_lp) < max_ladder)
-
-            # At the last braid position we MUST commit the snake.
-            if is_last and not can_commit_snake:
-                if not is_l1:
-                    l2_chars[braid_to_l2[bp]] = ''
-                continue
-
-            # Build the set of (snake_commit, l2_commit) options to try
-            options: list[tuple[bool, bool]] = []
-            for sc in ([True, False] if not is_last else [True]):
-                if sc and not can_commit_snake:
-                    continue
-                if not sc and not can_cont_snake:
-                    continue
-                if is_l1:
-                    options.append((sc, False))
-                else:
-                    for lc in [True, False]:
-                        if lc and not can_commit_l2:
-                            continue
-                        if not lc and not can_cont_l2:
-                            continue
-                        options.append((sc, lc))
-
-            for sc, lc in options:
-                next_sp = '' if sc else new_sp
-                next_snakes = (snakes + [new_sp]) if sc else snakes
-                next_lp = '' if (lc and not is_l1) else new_lp
-                next_lwords = (lwords + [new_lp]) if (lc and not is_l1) else lwords
-
-                result = rec(bp + 1, next_sp, next_snakes, next_lp, next_lwords)
-                if result is not None:
-                    return result
-
-            if not is_l1:
-                l2_chars[braid_to_l2[bp]] = ''
+        tried = 0
+        for snake in find_snakes(
+            l1, l2, l1_avail, l2_avail,
+            word_scores, snake_next,
+            min_snake, max_snake,
+            anchor_src, anchor_pos,
+            rng, deadline,
+        ):
+            tried += 1
+            if tried > 50:
+                break
+            new_l1 = l1_avail - frozenset(snake.l1_positions())
+            new_l2 = l2_avail - frozenset(snake.l2_positions())
+            result = solve(new_l1, new_l2, committed + [snake])
+            if result is not None:
+                return result
 
         return None
 
-    return rec(0, '', [], '', [])
+    return solve(frozenset(range(n)), frozenset(range(n)), [])
 
+
+# ── Generator ─────────────────────────────────────────────────────────────────
 
 def generate_puzzle(
     word_scores: dict[str, int],
@@ -357,201 +285,296 @@ def generate_puzzle(
     min_ladder_word: int = 3,
     max_ladder_word: int = 7,
     min_snake: int = 3,
-    max_snake: int = 12,
-    max_tries: int = 200,
-    time_limit: float = 60.0,
+    max_snake: int = 10,
+    max_l1_trials: int = 50,
+    time_limit: float = 120.0,
     seed: int = 42,
-) -> tuple[list[str], list[str], list[str]] | None:
-    """
-    Generate a valid puzzle using CSP backtracking.
-
-    Strategy: randomly sample L1 word sequences; for each L1, backtrack
-    over L2 letter choices enforcing snake-prefix and L2-word-prefix
-    constraints simultaneously (intersection pruning).  Much more efficient
-    than blind random search.
-    """
-    import time
-
+) -> tuple[list[str], list[str], list[Snake]] | None:
     rng = random.Random(seed)
     deadline = time.time() + time_limit
 
-    l1_pos, l2_pos = braid_positions(target_len)
-
     words_by_len: dict[int, list[str]] = defaultdict(list)
-    for word, score in word_scores.items():
+    for word in word_scores:
         if min_ladder_word <= len(word) <= max_ladder_word:
             words_by_len[len(word)].append(word)
 
-    print(f"Building prefix index …", end=" ", flush=True)
-    snake_next = _build_next_letters(word_scores, max_snake)
-    ladder_next = _build_next_letters(word_scores, max_ladder_word)
-    print("done")
-    print(f"Generating puzzle (ladder={target_len} letters, seed={seed}, "
-          f"time limit={time_limit:.0f}s) …")
+    def random_seq(target: int) -> list[str] | None:
+        words, remaining = [], target
+        while remaining > 0:
+            ok = [l for l in range(min_ladder_word, min(max_ladder_word, remaining) + 1)
+                  if words_by_len.get(l)]
+            if not ok:
+                return None
+            length = rng.choice(ok)
+            words.append(rng.choice(words_by_len[length]))
+            remaining -= length
+        return words
 
-    for attempt in range(1, max_tries + 1):
+    print(f"Building prefix index … ", end="", flush=True)
+    snake_next = _build_next_letters(word_scores, max_snake)
+    print("done")
+
+    rng2 = random.Random(seed + 1)
+
+    # Time budget per (L1, L2) pair — caps backtracking so we try many pairs.
+    total_pairs = max_l1_trials * 5
+    per_pair_secs = max(0.5, (deadline - time.time()) / total_pairs)
+
+    print(f"Generating puzzle (ladder={target_len} letters, {per_pair_secs:.1f}s/pair) …")
+    for trial in range(1, max_l1_trials + 1):
         if time.time() > deadline:
-            print(f"  Time limit reached after {attempt-1} L1 trials.")
+            print("  Time limit reached.")
             break
 
-        l1_words = _random_word_sequence(words_by_len, target_len,
-                                          min_ladder_word, max_ladder_word, rng)
-        if l1_words is None:
+        l1_words = random_seq(target_len)
+        if not l1_words:
             continue
+        for _ in range(5):
+            if time.time() > deadline:
+                break
+            l2_words = random_seq(target_len)
+            if not l2_words:
+                continue
 
-        l1_chars = list(''.join(l1_words))
-        print(f"  L1 trial {attempt}: {' '.join(l1_words)} … ", end="", flush=True)
+            l1 = list(''.join(l1_words))
+            l2 = list(''.join(l2_words))
+            pair_deadline = time.time() + per_pair_secs
 
-        result = _csp_solve(
-            l1_chars, word_scores, snake_next, ladder_next,
-            l1_pos, l2_pos, target_len,
-            min_snake, max_snake, min_ladder_word, max_ladder_word,
-            rng, deadline,
-        )
+            print(f"  [{trial}] L1={' '.join(l1_words)}  L2={' '.join(l2_words)} … ", end="", flush=True)
 
-        if result is not None:
-            l2_chars, l2_words, snakes = result
-            print("found!")
-            return l1_words, l2_words, snakes
-        else:
-            print("no solution")
+            def solve(
+                l1_avail: frozenset[int],
+                l2_avail: frozenset[int],
+                committed: list[Snake],
+                max_per_anchor: int = 30,
+            ) -> list[Snake] | None:
+                if time.time() > pair_deadline:
+                    return None
+                if not l1_avail and not l2_avail:
+                    return committed
+                if l1_avail:
+                    anchor_src, anchor_pos = 'L1', min(l1_avail)
+                else:
+                    anchor_src, anchor_pos = 'L2', min(l2_avail)
+                tried = 0
+                for snake in find_snakes(
+                    l1, l2, l1_avail, l2_avail,
+                    word_scores, snake_next,
+                    min_snake, max_snake,
+                    anchor_src, anchor_pos, rng2, pair_deadline,
+                ):
+                    tried += 1
+                    if tried > max_per_anchor:
+                        break
+                    new_l1 = l1_avail - frozenset(snake.l1_positions())
+                    new_l2 = l2_avail - frozenset(snake.l2_positions())
+                    result = solve(new_l1, new_l2, committed + [snake])
+                    if result is not None:
+                        return result
+                return None
+
+            snakes = solve(frozenset(range(target_len)), frozenset(range(target_len)), [])
+            if snakes is not None:
+                print("found!")
+                return l1_words, l2_words, snakes
+            print("–")
 
     return None
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
 
-def _snake_breakdown(
-    snake: str,
-    braid_offset: int,
-    pos_source: dict[int, tuple[str, int]],
-    braid: list[str],
-) -> str:
-    """Return human-readable breakdown like 'H(L1) + AB(L2) + IT(L1) + AT(L2)'."""
-    parts: list[str] = []
-    i = braid_offset
-    end = braid_offset + len(snake)
-    while i < end:
-        src = pos_source[i][0]
-        run = 1
-        while i + run < end and pos_source[i + run][0] == src:
-            run += 1
-        letters = ''.join(braid[i:i + run])
-        parts.append(f"{letters}({src})")
-        i += run
-    return ' + '.join(parts)
+def _chunk_label(chunk: Chunk) -> str:
+    pos = chunk.positions()
+    arrow = "→" if chunk.forward else "←"
+    if len(pos) == 1:
+        return f"{chunk.source}[{pos[0]+1}]{arrow}"
+    return f"{chunk.source}[{pos[0]+1}‥{pos[-1]+1}]{arrow}"
 
 
 def display_puzzle(
     l1_words: list[str],
     l2_words: list[str],
-    snake_words: list[str],
+    snakes: list[Snake],
 ) -> None:
     l1 = list(''.join(l1_words))
     l2 = list(''.join(l2_words))
-    n = len(l1)
-    l1_pos, l2_pos = braid_positions(n)
-    braid = make_braid(l1, l2)
 
-    pos_source: dict[int, tuple[str, int]] = {}
-    for i, p in enumerate(l1_pos):
-        pos_source[p] = ('L1', i)
-    for i, p in enumerate(l2_pos):
-        pos_source[p] = ('L2', i)
-
-    bar = '═' * 56
+    bar = '═' * 60
     print(f"\n{bar}")
     print("  SNAKES & LADDERS WORD PUZZLE")
     print(bar)
-
-    def ladder_line(words: list[str]) -> str:
-        return '  '.join(w for w in words)
-
-    print(f"\n  LADDER 1 ({n} letters):  {ladder_line(l1_words)}")
+    print(f"\n  LADDER 1 ({len(l1)} letters):  {'  '.join(l1_words)}")
     print(f"  {'  '.join(l1)}")
-    print(f"\n  LADDER 2 ({n} letters):  {ladder_line(l2_words)}")
+    print(f"\n  LADDER 2 ({len(l2)} letters):  {'  '.join(l2_words)}")
     print(f"  {'  '.join(l2)}")
-
-    print(f"\n  SNAKES ({len(snake_words)} words, {sum(len(s) for s in snake_words)} letters total):")
-    offset = 0
-    for snake in snake_words:
-        breakdown = _snake_breakdown(snake, offset, pos_source, braid)
-        print(f"    {snake:<16} ←  {breakdown}")
-        offset += len(snake)
-
+    total = sum(len(s.word) for s in snakes)
+    print(f"\n  SNAKES ({len(snakes)} words, {total} letters):")
+    for snake in snakes:
+        labels = '  +  '.join(_chunk_label(c) for c in snake.chunks)
+        print(f"    {snake.word:<16}  ←  {labels}")
     print(f"\n{bar}\n")
 
 
 # ── Verify ────────────────────────────────────────────────────────────────────
+
+def find_decompositions(
+    word: str,
+    l1: list[str],
+    l2: list[str],
+    l1_avail: frozenset[int],
+    l2_avail: frozenset[int],
+):
+    """
+    Generator: yields every Snake that spells `word` exactly using
+    available positions from L1 and L2, alternating chunks, each chunk
+    contiguous and in one direction.  Both ladders must be used at least once.
+    """
+    def rec(
+        wpos: int,
+        cur_src: str,
+        cur_pos: int,
+        cur_dir: int,
+        l1_av: frozenset[int],
+        l2_av: frozenset[int],
+        chunks: list[Chunk],
+    ):
+        if wpos == len(word):
+            if any(c.source == 'L1' for c in chunks) and any(c.source == 'L2' for c in chunks):
+                yield Snake(tuple(chunks), word)
+            return
+
+        c = word[wpos]
+        cur_chars = l1 if cur_src == 'L1' else l2
+        oth_src   = 'L2' if cur_src == 'L1' else 'L1'
+        oth_chars = l2  if cur_src == 'L1' else l1
+        cur_av    = l1_av if cur_src == 'L1' else l2_av
+        oth_av    = l2_av if cur_src == 'L1' else l1_av
+
+        # Option A: continue on the same ladder one step
+        nxt = cur_pos + cur_dir
+        if nxt in cur_av and cur_chars[nxt] == c:
+            new_chunk = Chunk(cur_src, chunks[-1].start, chunks[-1].length + 1, cur_dir > 0)
+            new_l1 = (l1_av - {nxt}) if cur_src == 'L1' else l1_av
+            new_l2 = (l2_av - {nxt}) if cur_src == 'L2' else l2_av
+            yield from rec(wpos + 1, cur_src, nxt, cur_dir, new_l1, new_l2, chunks[:-1] + [new_chunk])
+
+        # Option B: switch to the other ladder at any matching position
+        for p in oth_av:
+            if oth_chars[p] != c:
+                continue
+            for d in (1, -1):
+                new_chunk = Chunk(oth_src, p, 1, d > 0)
+                new_l1 = (l1_av - {p}) if oth_src == 'L1' else l1_av
+                new_l2 = (l2_av - {p}) if oth_src == 'L2' else l2_av
+                yield from rec(wpos + 1, oth_src, p, d, new_l1, new_l2, chunks + [new_chunk])
+
+    # Try every available starting position in either ladder
+    for start_src in ('L1', 'L2'):
+        start_avail = l1_avail if start_src == 'L1' else l2_avail
+        start_chars = l1      if start_src == 'L1' else l2
+        for start_pos in sorted(start_avail):
+            if start_chars[start_pos] != word[0]:
+                continue
+            for d in (1, -1):
+                init_chunk = Chunk(start_src, start_pos, 1, d > 0)
+                new_l1 = (l1_avail - {start_pos}) if start_src == 'L1' else l1_avail
+                new_l2 = (l2_avail - {start_pos}) if start_src == 'L2' else l2_avail
+                yield from rec(1, start_src, start_pos, d, new_l1, new_l2, [init_chunk])
+
 
 def verify_puzzle(
     l1_words: list[str],
     l2_words: list[str],
     snake_words: list[str],
     word_scores: dict[str, int],
-) -> bool:
+    time_limit: float = 30.0,
+) -> tuple[bool, list[Snake]]:
+    """
+    Verify a puzzle given as word strings.  Backtracks over all valid chunk
+    decompositions so that every snake word can be placed simultaneously.
+    """
     l1 = list(''.join(l1_words))
     l2 = list(''.join(l2_words))
-    if len(l1) != len(l2):
-        print(f"✗ L1 has {len(l1)} letters, L2 has {len(l2)} — must match.")
-        return False
+    n = len(l1)
+    if len(l2) != n:
+        print(f"✗ L1={len(l1)}, L2={len(l2)} — must match.")
+        return False, []
 
-    braid = make_braid(l1, l2)
-    expected = ''.join(braid)
-    actual = ''.join(snake_words)
+    deadline = time.time() + time_limit
+    words = [w.upper() for w in snake_words]
 
-    if expected != actual:
-        print("✗ Snake letters don't match braid.")
-        print(f"  Braid:  {expected}")
-        print(f"  Snakes: {actual}")
-        return False
+    def solve(
+        remaining: list[str],
+        l1_av: frozenset[int],
+        l2_av: frozenset[int],
+        committed: list[Snake],
+    ) -> list[Snake] | None:
+        if time.time() > deadline:
+            return None
+        if not remaining:
+            if not l1_av and not l2_av:
+                return committed
+            return None
+        w = remaining[0]
+        for snake in find_decompositions(w, l1, l2, l1_av, l2_av):
+            if time.time() > deadline:
+                return None
+            new_l1 = l1_av - frozenset(snake.l1_positions())
+            new_l2 = l2_av - frozenset(snake.l2_positions())
+            result = solve(remaining[1:], new_l1, new_l2, committed + [snake])
+            if result is not None:
+                return result
+        return None
 
-    bad_words = []
-    for w in l1_words + l2_words + snake_words:
+    snake_objs = solve(words, frozenset(range(n)), frozenset(range(n)), [])
+
+    if snake_objs is None:
+        print("✗ No valid decomposition found (positions conflict or time limit reached).")
+        return False, []
+
+    if l1_av := frozenset(range(n)) - frozenset(p for s in snake_objs for p in s.l1_positions()):
+        print(f"✗ Uncovered L1 positions: {sorted(l1_av)}")
+        return False, []
+
+    for w in words:
         if w not in word_scores:
-            bad_words.append(w)
-    if bad_words:
-        print(f"⚠ Words not in wordlist: {', '.join(bad_words)}")
-
+            print(f"⚠  '{w}' not in wordlist")
     print("✓ Valid puzzle!")
-    return True
+    return True, snake_objs
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Snakes & Ladders word puzzle builder",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = argparse.ArgumentParser(description="Snakes & Ladders word puzzle builder")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # check
     chk = sub.add_parser("check", help="Given ladder words, find snakes")
-    chk.add_argument("ladder1", help='Ladder 1 words, space-separated (quote it): "HITCH SENATE BOGUS"')
-    chk.add_argument("ladder2", help='Ladder 2 words, space-separated')
+    chk.add_argument("ladder1")
+    chk.add_argument("ladder2")
     chk.add_argument("--min-snake", type=int, default=3)
     chk.add_argument("--max-snake", type=int, default=12)
     chk.add_argument("--min-score", type=int, default=50)
+    chk.add_argument("--time-limit", type=float, default=30.0)
 
-    # generate
     gen = sub.add_parser("generate", help="Search for a valid puzzle")
-    gen.add_argument("--length", type=int, default=15, help="Ladder length in letters (default 15)")
-    gen.add_argument("--min-word", type=int, default=3, help="Min letters per ladder word")
-    gen.add_argument("--max-word", type=int, default=7, help="Max letters per ladder word")
+    gen.add_argument("--length", type=int, default=15)
+    gen.add_argument("--min-word", type=int, default=3)
+    gen.add_argument("--max-word", type=int, default=7)
     gen.add_argument("--min-snake", type=int, default=3)
-    gen.add_argument("--max-snake", type=int, default=12)
-    gen.add_argument("--tries", type=int, default=200, help="Max L1 sequences to try")
-    gen.add_argument("--time-limit", type=float, default=60.0, help="Total time budget in seconds")
+    gen.add_argument("--max-snake", type=int, default=10)
+    gen.add_argument("--tries", type=int, default=50)
+    gen.add_argument("--time-limit", type=float, default=120.0)
     gen.add_argument("--seed", type=int, default=42)
     gen.add_argument("--min-score", type=int, default=50)
 
-    # verify
     ver = sub.add_parser("verify", help="Verify a complete puzzle")
     ver.add_argument("ladder1")
     ver.add_argument("ladder2")
-    ver.add_argument("snakes", help='Snake words space-separated: "HABITAT CHEESE MINARET EARBONE GUSTS"')
+    ver.add_argument("snakes")
     ver.add_argument("--min-score", type=int, default=50)
+    ver.add_argument("--time-limit", type=float, default=60.0)
 
     args = parser.parse_args()
 
@@ -564,16 +587,13 @@ def main() -> None:
     print(f"{len(word_scores):,} words")
 
     if args.cmd == "check":
-        l1_words = [w.upper() for w in args.ladder1.split()]
-        l2_words = [w.upper() for w in args.ladder2.split()]
-        for w in l1_words + l2_words:
-            if w not in word_scores:
-                print(f"  Warning: '{w}' not in wordlist")
-        snakes = check_puzzle(l1_words, l2_words, word_scores, args.min_snake, args.max_snake)
+        l1w = [w.upper() for w in args.ladder1.split()]
+        l2w = [w.upper() for w in args.ladder2.split()]
+        snakes = check_puzzle(l1w, l2w, word_scores, args.min_snake, args.max_snake, args.time_limit)
         if snakes:
-            display_puzzle(l1_words, l2_words, snakes)
+            display_puzzle(l1w, l2w, snakes)
         else:
-            print("No valid snake segmentation found for these ladders.")
+            print("No valid snake arrangement found within time limit.")
 
     elif args.cmd == "generate":
         result = generate_puzzle(
@@ -583,23 +603,22 @@ def main() -> None:
             max_ladder_word=args.max_word,
             min_snake=args.min_snake,
             max_snake=args.max_snake,
-            max_tries=args.tries,
+            max_l1_trials=args.tries,
             time_limit=args.time_limit,
             seed=args.seed,
         )
         if result:
-            l1_words, l2_words, snakes = result
-            display_puzzle(l1_words, l2_words, snakes)
+            display_puzzle(*result)
         else:
-            print(f"No valid puzzle found after {args.tries:,} attempts. Try a different --seed.")
+            print("No valid puzzle found. Try a different --seed.")
 
     elif args.cmd == "verify":
-        l1_words = [w.upper() for w in args.ladder1.split()]
-        l2_words = [w.upper() for w in args.ladder2.split()]
-        snake_words = [w.upper() for w in args.snakes.split()]
-        ok = verify_puzzle(l1_words, l2_words, snake_words, word_scores)
+        l1w = [w.upper() for w in args.ladder1.split()]
+        l2w = [w.upper() for w in args.ladder2.split()]
+        sw = args.snakes.split()
+        ok, snake_objs = verify_puzzle(l1w, l2w, sw, word_scores, time_limit=args.time_limit)
         if ok:
-            display_puzzle(l1_words, l2_words, snake_words)
+            display_puzzle(l1w, l2w, snake_objs)
 
 
 if __name__ == "__main__":
