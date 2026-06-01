@@ -889,11 +889,22 @@ def draw_puzzle_image(
         for k in range(len(curve) - 1):
             draw.line([curve[k], curve[k + 1]], fill=color, width=LINE_W)
 
-        # Numbered start marker
-        sx, sy = waypoints[0]
-        R = 9
-        draw.ellipse([sx - R, sy - R, sx + R, sy + R], fill=color, outline='white', width=1)
-        draw.text((sx, sy), str(si + 1), fill='white', font=f_marker, anchor='mm')
+        # Forked mouth at head, oriented away from the body
+        hx, hy = curve[0]
+        if len(curve) > 1:
+            dx, dy = curve[0][0] - curve[1][0], curve[0][1] - curve[1][1]
+            mag = (dx*dx + dy*dy) ** 0.5
+            if mag > 0:
+                dx, dy = dx / mag, dy / mag
+            else:
+                dx, dy = 0.0, -1.0
+        else:
+            dx, dy = 0.0, -1.0
+        fork_len, fork_spread = 12, 7
+        px, py = -dy, dx          # perpendicular
+        p1 = (hx + dx*fork_len + px*fork_spread, hy + dy*fork_len + py*fork_spread)
+        p2 = (hx + dx*fork_len - px*fork_spread, hy + dy*fork_len - py*fork_spread)
+        draw.line([p1, (hx, hy), p2], fill=color, width=LINE_W)
 
     # ── Letters — solution only ───────────────────────────────────────────────
     if solved:
