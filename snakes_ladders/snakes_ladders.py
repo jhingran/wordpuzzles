@@ -1194,6 +1194,44 @@ def verify_puzzle(
     return True, snake_objs
 
 
+# ── Interactive clue editor ───────────────────────────────────────────────────
+
+def _edit_clues_interactively(
+    clues: dict[str, str],
+    all_words: list[str],
+) -> dict[str, str]:
+    """Show a numbered clue list and let the user edit any entry before PNG generation."""
+    clues = dict(clues)
+    SEP = "─" * 58
+    while True:
+        print(f"\n  ┌{SEP}┐")
+        print(f"  │  {'#':<4}  {'WORD':<12}  CLUE")
+        print(f"  │  {SEP}")
+        for i, w in enumerate(all_words, 1):
+            clue = clues.get(w, "")
+            print(f"  │  {i:<4}  {w:<12}  {clue}")
+        print(f"  │  {SEP}")
+        print(f"  │  {'0':<4}  {'──':<12}  I am happy — generate PNG")
+        print(f"  └{SEP}┘")
+        try:
+            raw = input("  Edit clue # (0 to finish): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if raw == "0" or raw.lower() in ("done", "happy", ""):
+            break
+        if not raw.isdigit() or not (1 <= int(raw) <= len(all_words)):
+            print(f"  Please enter a number between 0 and {len(all_words)}.")
+            continue
+        word = all_words[int(raw) - 1]
+        current = clues.get(word, "")
+        if current:
+            print(f"  Current: {current!r}")
+        new_clue = input(f"  New clue for {word} (blank to keep): ").strip()
+        if new_clue:
+            clues[word] = new_clue
+    return clues
+
+
 # ── PNG output helper ────────────────────────────────────────────────────────
 
 def _emit_pngs(
@@ -1202,6 +1240,7 @@ def _emit_pngs(
     snakes: list[Snake],
     base_path: str,
     include_words: dict[str, str] | None = None,
+    interactive: bool = False,
 ) -> None:
     """Generate solution PNG and puzzle PNG (with clues) from a single --png path."""
     from pathlib import Path
@@ -1216,6 +1255,11 @@ def _emit_pngs(
     print("  Generating clues … ", end="", flush=True)
     clues = generate_clues(l1_words, l2_words, snakes, overrides=include_words)
     print("done" if clues else "no API key — using blank clues")
+
+    # Optional interactive editing before writing the puzzle PNG
+    if interactive:
+        all_words = l1_words + l2_words + [s.word for s in snakes]
+        clues = _edit_clues_interactively(clues, all_words)
 
     # Puzzle: blank cells + clue panel
     draw_puzzle_image(l1_words, l2_words, snakes, puzzle_path,
@@ -1238,6 +1282,8 @@ def main() -> None:
     chk.add_argument("--crossing", action="store_true",
                      help="Allow crossing snakes (default: non-crossing)")
     chk.add_argument("--png", metavar="FILE", help="Save puzzle image to FILE")
+    chk.add_argument("--interactive", action="store_true",
+                     help="Edit clues interactively before writing the puzzle PNG")
 
     gen = sub.add_parser("generate", help="Search for a valid puzzle")
     gen.add_argument("--length", type=int, default=15)
@@ -1254,6 +1300,8 @@ def main() -> None:
     gen.add_argument("--png", metavar="FILE", help="Save puzzle image to FILE")
     gen.add_argument("--max-short-snakes", type=int, default=2,
                      help="Reject puzzles with more than this many 3-letter snakes (default: 2)")
+    gen.add_argument("--interactive", action="store_true",
+                     help="Edit clues interactively before writing the puzzle PNG")
     gen.add_argument(
         "--include", metavar="WORDS", default="",
         help=(
@@ -1300,7 +1348,8 @@ def main() -> None:
         if snakes:
             display_puzzle(l1w, l2w, snakes)
             if args.png:
-                _emit_pngs(l1w, l2w, snakes, args.png)
+                _emit_pngs(l1w, l2w, snakes, args.png,
+                           interactive=args.interactive)
         else:
             print("No valid snake arrangement found within time limit.")
 
@@ -1325,7 +1374,8 @@ def main() -> None:
         if result:
             display_puzzle(*result)
             if args.png:
-                _emit_pngs(*result, args.png, include_words=include_words)
+                _emit_pngs(*result, args.png, include_words=include_words,
+                           interactive=args.interactive)
         else:
             print("No valid puzzle found. Try a different --seed.")
 
