@@ -170,6 +170,121 @@ def solve(
     return backtrack(0, [])
 
 
+# ── PNG output ───────────────────────────────────────────────────────────────
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    _PIL = True
+except ImportError:
+    _PIL = False
+
+_CORNER_COLORS = [
+    '#C1121F', '#2D6A4F', '#1D3557', '#7B2D8B', '#E76F51',
+    '#0077B6', '#8B5E3C', '#6D6875', '#2B9348', '#9B2226',
+    '#F4A261', '#3A0CA3', '#E63946', '#457B9D', '#A8DADC',
+    '#D62828', '#B7E4C7', '#F1FAEE',
+]
+
+
+def _font(size: int):
+    for path in (
+        '/System/Library/Fonts/Helvetica.ttc',
+        '/System/Library/Fonts/Arial.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    ):
+        try:
+            return ImageFont.truetype(path, size)
+        except (IOError, OSError):
+            pass
+    return ImageFont.load_default()
+
+
+def draw_image(
+    widths: list,
+    words: Optional[list],      # None → blank puzzle cells
+    word_set_4: set,
+    output_path: str,
+    solved: bool = True,
+) -> None:
+    if not _PIL:
+        print("  Pillow not installed — skipping PNG.")
+        return
+
+    CELL    = 68          # px per cell
+    PAD     = 36          # outer padding
+    TITLE_H = 52
+    DOT_R   = 11          # interior-corner dot radius
+    BW      = 2           # cell border width
+
+    max_w   = max(widths)
+    n_rows  = len(widths)
+    offsets = [(max_w - w) // 2 for w in widths]
+    groups  = square_groups(widths)
+
+    grid_w = max_w * CELL
+    grid_h = n_rows * CELL
+    img_w  = PAD + grid_w + PAD
+    img_h  = PAD + TITLE_H + grid_h + PAD
+
+    img  = Image.new('RGB', (img_w, img_h), '#F8F7F2')
+    draw = ImageDraw.Draw(img)
+
+    f_title  = _font(20)
+    f_letter = _font(32)
+    f_dot    = _font(13)
+
+    # Title
+    title = f"INTERLOCKING SQUARES  ({' · '.join(str(w) for w in widths)})"
+    draw.text((img_w // 2, PAD + TITLE_H // 2), title,
+              fill='#1A1A2E', font=f_title, anchor='mm')
+
+    grid_top = PAD + TITLE_H
+
+    def cell_rect(row, col):
+        x0 = PAD + (offsets[row] + col) * CELL
+        y0 = grid_top + row * CELL
+        return [x0, y0, x0 + CELL, y0 + CELL]
+
+    def cell_center(row, col):
+        r = cell_rect(row, col)
+        return ((r[0] + r[2]) // 2, (r[1] + r[3]) // 2)
+
+    # ── Cells ──
+    for i, w in enumerate(widths):
+        for j in range(w):
+            rect = cell_rect(i, j)
+            draw.rectangle(rect, fill='white', outline='#1A1A2E', width=BW)
+            if solved and words:
+                cx, cy = cell_center(i, j)
+                letter = words[i][j]
+                draw.text((cx, cy), letter, fill='#1A1A2E', font=f_letter, anchor='mm')
+
+    # ── Interior-corner dots ──
+    for si, (TL, TR, BR, BL) in enumerate(groups):
+        # Absolute column gap = offset of TL's row + TL col + 1
+        abs_gap = offsets[TL[0]] + TL[1] + 1
+        cx = PAD + abs_gap * CELL
+        cy = grid_top + (TL[0] + 1) * CELL
+
+        color = '#888888' if solved else _CORNER_COLORS[si % len(_CORNER_COLORS)]
+        draw.ellipse([cx - DOT_R, cy - DOT_R, cx + DOT_R, cy + DOT_R],
+                     fill=color, outline='white', width=1)
+        if not solved:
+            draw.text((cx, cy), str(si + 1), fill='white', font=f_dot, anchor='mm')
+
+    img.save(output_path)
+    print(f"  → Saved: {output_path}")
+
+
+def _emit_pngs(widths: list, words: list, word_set_4: set, base_path: str) -> None:
+    from pathlib import Path as _Path
+    p = _Path(base_path)
+    draw_image(widths, words, word_set_4,
+               str(p.with_stem(p.stem + '_solution')), solved=True)
+    draw_image(widths, None, word_set_4,
+               str(p.with_stem(p.stem + '_puzzle')), solved=False)
+
+
 # ── Display ───────────────────────────────────────────────────────────────────
 
 def display(widths: list[int], words: list[str], word_set_4: set[str]) -> None:
@@ -210,10 +325,11 @@ def main() -> None:
         help="Row widths, e.g. 3 5 5 3  (odd numbers, widen then narrow by 2)",
     )
     ap.add_argument("--seed",       type=int,   default=42)
-    ap.add_argument("--min-score",  type=int,   default=50)
+    ap.add_argument("--min-score",  type=int,   default=70)
     ap.add_argument("--time-limit", type=float, default=120.0)
     ap.add_argument("--tries",      type=int,   default=20,
                     help="Seed variations to attempt (default: 20)")
+    ap.add_argument("--png", metavar="FILE", help="Save solution + puzzle PNGs")
     args = ap.parse_args()
 
     widths = args.widths
@@ -252,6 +368,8 @@ def main() -> None:
         sys.exit(1)
 
     display(widths, result, word_set_4)
+    if args.png:
+        _emit_pngs(widths, result, word_set_4, args.png)
 
 
 if __name__ == "__main__":
