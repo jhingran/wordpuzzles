@@ -69,6 +69,24 @@ def square_groups(widths: list[int]) -> list[tuple]:
     return groups
 
 
+def standing_cells(widths: list) -> list:
+    """
+    Return (row, col) pairs that belong to no square group.
+    These cells carry only a row-word letter and have no square constraint — a
+    design flaw avoided by using two equal-width middle rows instead of one.
+    """
+    groups = square_groups(widths)
+    covered = set()
+    for (TL, TR, BR, BL) in groups:
+        covered.update([TL, TR, BR, BL])
+    standing = []
+    for i, w in enumerate(widths):
+        for j in range(w):
+            if (i, j) not in covered:
+                standing.append((i, j))
+    return standing
+
+
 # ── Square-word constraint ────────────────────────────────────────────────────
 
 def build_valid_squares(words_4: list[str]) -> set[tuple]:
@@ -321,8 +339,8 @@ def display(widths: list[int], words: list[str], word_set_4: set[str]) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Interlocking Squares puzzle generator")
     ap.add_argument(
-        "--widths", type=int, nargs="+", default=[3, 5, 5, 3],
-        help="Row widths, e.g. 3 5 5 3  (odd numbers, widen then narrow by 2)",
+        "--widths", type=int, nargs="+", default=[3, 5, 7, 7, 5, 3],
+        help="Row widths, e.g. 3 5 7 7 5 3  (odd, widen then narrow by 2; two equal middle rows avoids standing squares)",
     )
     ap.add_argument("--seed",       type=int,   default=42)
     ap.add_argument("--min-score",  type=int,   default=70)
@@ -333,6 +351,14 @@ def main() -> None:
     args = ap.parse_args()
 
     widths = args.widths
+
+    bad = standing_cells(widths)
+    if bad:
+        row_labels = [chr(65 + r) for r, c in bad]
+        print(f"Warning: {len(bad)} standing cell(s) in row(s) {', '.join(row_labels)} "
+              f"— they carry no square constraint. "
+              f"Use two equal-width middle rows (e.g. 3 5 7 7 5 3) to avoid this.",
+              file=sys.stderr)
 
     print(f"Loading wordlist … ", end="", flush=True)
     word_scores = load_wordlist(WORDLIST_PATH, args.min_score)
