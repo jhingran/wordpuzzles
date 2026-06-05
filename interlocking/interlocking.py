@@ -413,6 +413,7 @@ def draw_image(
     solved: bool = True,
     clues: Optional[dict] = None,   # {word: clue_text} — triggers clue panel
     clue_seed: int = 0,
+    theme_cells: Optional[set] = None,  # {(row, col)} cells to mark with an inscribed circle
 ) -> None:
     if not _PIL:
         print("  Pillow not installed — skipping PNG.")
@@ -423,12 +424,14 @@ def draw_image(
     TITLE_H = 52
     DOT_R   = 11
     BW      = 2
+    LABEL_W = 28     # left column for A–F row labels
     # clue panel constants
-    CLUE_W   = 290
-    CLUE_GAP = 28
-    HDR_H    = 25
-    LINE_H   = 20
-    SEC_GAP  = 14
+    INSTR_H  = 72
+    CLUE_W   = 286
+    CLUE_GAP = 22
+    HDR_H    = 23
+    LINE_H   = 18
+    SEC_GAP  = 9
 
     max_w   = max(widths)
     n_rows  = len(widths)
@@ -438,16 +441,19 @@ def draw_image(
 
     grid_w = max_w * CELL
     grid_h = n_rows * CELL
+    GX     = PAD + LABEL_W   # x-origin of the grid
 
     has_panel = (not solved) and bool(clues) and (words is not None)
 
     if has_panel:
         n_per_reg = sum(1 for r in regions if r == 'green')
-        clue_h    = 3 * (HDR_H + n_per_reg * LINE_H) + 2 * SEC_GAP
-        img_w     = PAD + grid_w + CLUE_GAP + CLUE_W + PAD
+        clue_h    = (INSTR_H + SEC_GAP
+                     + HDR_H + n_rows * LINE_H + SEC_GAP
+                     + 3 * (HDR_H + n_per_reg * LINE_H) + 2 * SEC_GAP)
+        img_w     = GX + grid_w + CLUE_GAP + CLUE_W + PAD
         img_h     = PAD + TITLE_H + max(grid_h, clue_h) + PAD
     else:
-        img_w = PAD + grid_w + PAD
+        img_w = GX + grid_w + PAD
         img_h = PAD + TITLE_H + grid_h + PAD
 
     img  = Image.new('RGB', (img_w, img_h), '#F8F7F2')
@@ -458,15 +464,17 @@ def draw_image(
     f_dot      = _font(13)
     f_clue_hdr = _font(13)
     f_clue     = _font(12)
+    f_label    = _font(14)
+    f_instr    = _font(10)
 
-    title = f"INTERLOCKING SQUARES  ({' · '.join(str(w) for w in widths)})"
+    title = "INTERLOCKING SQUARES"
     draw.text((img_w // 2, PAD + TITLE_H // 2), title,
               fill='#1A1A2E', font=f_title, anchor='mm')
 
     grid_top = PAD + TITLE_H
 
     def cell_rect(row, col):
-        x0 = PAD + (offsets[row] + col) * CELL
+        x0 = GX + (offsets[row] + col) * CELL
         y0 = grid_top + row * CELL
         return [x0, y0, x0 + CELL, y0 + CELL]
 
@@ -484,9 +492,24 @@ def draw_image(
                 draw.text((cx, cy), words[i][j], fill='#1A1A2E',
                           font=f_letter, anchor='mm')
 
-    # ── Build random clue-to-dot mapping ──
-    dot_label   = {}   # group_idx → label number within its region
-    clue_lookup = {}   # (region, label) → clue_text
+    # ── Row labels A–F ──
+    for i in range(n_rows):
+        lx = PAD + LABEL_W // 2
+        ly = grid_top + i * CELL + CELL // 2
+        draw.text((lx, ly), chr(ord('A') + i), fill='#1A1A2E', font=f_label, anchor='mm')
+
+    # ── Inscribed circles for theme word cells ──
+    if theme_cells:
+        circ_r = CELL // 2 - 5
+        for (ri, ci) in theme_cells:
+            r = cell_rect(ri, ci)
+            mx = (r[0] + r[2]) // 2
+            my = (r[1] + r[3]) // 2
+            draw.ellipse([mx - circ_r, my - circ_r, mx + circ_r, my + circ_r],
+                         outline='#1A1A2E', width=2)
+
+    # ── Build randomised clue lists per region ──
+    region_clues: dict = {'green': [], 'blue': [], 'red': []}
 
     if has_panel:
         rng_c = random.Random(clue_seed)
@@ -495,35 +518,62 @@ def draw_image(
             region_idxs[reg].append(si)
 
         for reg in ('green', 'blue', 'red'):
-            idxs   = region_idxs[reg]
-            labels = list(range(1, len(idxs) + 1))
-            rng_c.shuffle(labels)
-            for grp_idx, lbl in zip(idxs, labels):
-                dot_label[grp_idx] = lbl
+            cl = []
+            for grp_idx in region_idxs[reg]:
                 TL, TR, BR, BL = groups[grp_idx]
                 sq = find_square_word(
                     words[TL[0]][TL[1]], words[TR[0]][TR[1]],
                     words[BR[0]][BR[1]], words[BL[0]][BL[1]], word_set_4,
                 )
-                clue_lookup[(reg, lbl)] = clues.get(sq, sq)
+                cl.append(clues.get(sq, sq))
+            rng_c.shuffle(cl)
+            region_clues[reg] = cl
 
     # ── Interior-corner dots ──
     for si, (TL, TR, BR, BL) in enumerate(groups):
         abs_gap = offsets[TL[0]] + TL[1] + 1
-        cx = PAD + abs_gap * CELL
+        cx = GX + abs_gap * CELL
         cy = grid_top + (TL[0] + 1) * CELL
 
         color = '#888888' if solved else _REGION_COLOR[regions[si]]
         draw.ellipse([cx - DOT_R, cy - DOT_R, cx + DOT_R, cy + DOT_R],
                      fill=color, outline='white', width=1)
-        if not solved:
-            lbl = dot_label.get(si, si + 1)
-            draw.text((cx, cy), str(lbl), fill='white', font=f_dot, anchor='mm')
 
     # ── Clue panel ──
     if has_panel:
-        px = PAD + grid_w + CLUE_GAP
+        px = GX + grid_w + CLUE_GAP
         py = grid_top
+
+        # Instruction text (no box)
+        ix = px + 10
+        iy = py + 10
+        ls = 15   # line spacing
+        for txt, col in [
+            ("Fill in rows A–F. Each row is a word.", '#1A1A2E'),
+            ("Green / blue / red clues go around dots of the same colour.", '#1A1A2E'),
+            ("Each answer is 4 letters, winding around the dot —", '#444444'),
+            ("clockwise or anticlockwise from any corner. Clues in random order.", '#444444'),
+        ]:
+            draw.text((ix, iy), txt, fill=col, font=f_instr, anchor='lm')
+            iy += ls
+        py += INSTR_H + SEC_GAP
+
+        # ROWS section
+        draw.rectangle([px, py, px + CLUE_W, py + HDR_H], fill='#444444')
+        draw.text((px + CLUE_W // 2, py + HDR_H // 2), 'ROWS',
+                  fill='white', font=f_clue_hdr, anchor='mm')
+        py += HDR_H
+        for i, w in enumerate(widths):
+            row_label = chr(ord('A') + i)
+            row_word  = words[i] if isinstance(words[i], str) else ''.join(words[i])
+            clue_txt  = clues.get(row_word, f'({w})')
+            line      = f"{row_label} ({w})  {clue_txt}"
+            if len(line) > 42:
+                line = line[:40] + '…'
+            draw.text((px + 8, py + LINE_H // 2), line,
+                      fill='#1A1A2E', font=f_clue, anchor='lm')
+            py += LINE_H
+        py += SEC_GAP
 
         for reg in ('green', 'blue', 'red'):
             hdr_color = _REGION_COLOR[reg]
@@ -533,13 +583,10 @@ def draw_image(
                       fill='white', font=f_clue_hdr, anchor='mm')
             py += HDR_H
 
-            # Clue lines (in label order 1..N, randomly mapped to positions)
-            n = len(region_idxs[reg])
-            for lbl in range(1, n + 1):
-                text = f"{lbl}. {clue_lookup.get((reg, lbl), '?')}"
-                if len(text) > 40:
-                    text = text[:38] + '…'
-                draw.text((px + 8, py + LINE_H // 2), text,
+            # Clue lines — randomised within region, no numbers shown
+            for clue_text in region_clues[reg]:
+                line = clue_text if len(clue_text) <= 42 else clue_text[:40] + '…'
+                draw.text((px + 8, py + LINE_H // 2), line,
                           fill='#1A1A2E', font=f_clue, anchor='lm')
                 py += LINE_H
 
@@ -552,14 +599,16 @@ def draw_image(
 def _emit_pngs(
     widths: list, words: list, word_set_4: set, base_path: str,
     clues: Optional[dict] = None, clue_seed: int = 0,
+    theme_cells: Optional[set] = None,
 ) -> None:
     from pathlib import Path as _Path
     p = _Path(base_path)
     draw_image(widths, words, word_set_4,
-               str(p.with_stem(p.stem + '_solution')), solved=True)
+               str(p.with_stem(p.stem + '_solution')), solved=True,
+               theme_cells=theme_cells)
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_puzzle')), solved=False,
-               clues=clues, clue_seed=clue_seed)
+               clues=clues, clue_seed=clue_seed, theme_cells=theme_cells)
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
@@ -751,12 +800,25 @@ def main() -> None:
         import os
         if os.environ.get('ANTHROPIC_API_KEY'):
             print("  Generating clues …", end="", flush=True)
-            clues = generate_clues(sq_words, include_words)
+            clues = generate_clues(list(result) + sq_words, include_words)
             print(" done")
         else:
             clues = None
+        # Collect cells belonging to theme words (rows + square corners)
+        theme_cells: set = set()
+        if include_words:
+            inc_set = set(include_words)
+            for i, row_word in enumerate(result):
+                if row_word in inc_set:
+                    for j in range(widths[i]):
+                        theme_cells.add((i, j))
+            for sq_w, (TL, TR, BR, BL) in zip(sq_words, square_groups(widths)):
+                if sq_w in inc_set:
+                    theme_cells.update([(TL[0], TL[1]), (TR[0], TR[1]),
+                                        (BR[0], BR[1]), (BL[0], BL[1])])
         _emit_pngs(widths, result, word_set_4, args.png,
-                   clues=clues, clue_seed=args.seed)
+                   clues=clues, clue_seed=args.seed,
+                   theme_cells=theme_cells or None)
 
 
 if __name__ == "__main__":
