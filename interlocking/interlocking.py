@@ -118,6 +118,43 @@ def find_square_word(tl: str, tr: str, br: str, bl: str,
     return cw  # shouldn't happen for a valid puzzle
 
 
+# ── Include words ─────────────────────────────────────────────────────────────
+
+def _parse_include(s: str) -> dict:
+    """Parse 'WORD: clue; WORD2' into {WORD: clue, WORD2: ''} (uppercase keys)."""
+    result = {}
+    for entry in s.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" in entry:
+            word, clue = entry.split(":", 1)
+            result[word.strip().upper()] = clue.strip()
+        else:
+            result[entry.upper()] = ""
+    return result
+
+
+def _found_include(widths: list, words: list, word_set_4: set,
+                   include_words: dict) -> list:
+    """Return which include words appear in the solution (rows or square groups)."""
+    inc = set(include_words)
+    found = []
+    for w in words:
+        if w in inc:
+            found.append(w)
+    groups = square_groups(widths)
+    for (TL, TR, BR, BL) in groups:
+        sq = find_square_word(
+            words[TL[0]][TL[1]], words[TR[0]][TR[1]],
+            words[BR[0]][BR[1]], words[BL[0]][BL[1]],
+            word_set_4,
+        )
+        if sq in inc and sq not in found:
+            found.append(sq)
+    return found
+
+
 # ── CSP solver ────────────────────────────────────────────────────────────────
 
 def solve(
@@ -126,6 +163,7 @@ def solve(
     valid_sq: set[tuple],
     seed: int = 42,
     time_limit: float = 60.0,
+    include_words: Optional[dict] = None,
 ) -> Optional[list]:
     """
     Backtracking CSP: one word per row, satisfying all square-group constraints.
@@ -149,11 +187,13 @@ def solve(
     for (tl, tr, br, bl) in valid_sq:
         valid_given_top[(tl, tr)].add((br, bl))
 
-    # Shuffle word lists once per seed
-    shuffled: dict[int, list[str]] = {
-        length: rng.sample(ws, len(ws))
-        for length, ws in word_by_len.items()
-    }
+    # Shuffle word lists; put include words of matching length at the front
+    inc_set = set(include_words or {})
+    shuffled: dict[int, list[str]] = {}
+    for length, ws in word_by_len.items():
+        rest = rng.sample([w for w in ws if w not in inc_set], len([w for w in ws if w not in inc_set]))
+        front = [w for w in inc_set if len(w) == length and w in set(ws)]
+        shuffled[length] = front + rest
 
     def backtrack(row: int, placed: list) -> Optional[list]:
         if time.time() > deadline:
@@ -173,6 +213,77 @@ def solve(
 
         placed_set = set(placed)
         for word in base:
+            if word in placed_set:
+                continue
+            if all(
+                (word[br_col], word[bl_col]) in vp
+                for bl_col, br_col, vp in constraints
+            ):
+                result = backtrack(row + 1, placed + [word])
+                if result is not None:
+                    return result
+
+        return None
+
+    return backtrack(0, [])
+
+
+# ── Targeted CSP solver (forced row words) ───────────────────────────────────
+
+def solve_forced(
+    widths: list,
+    word_by_len: dict,
+    valid_sq: set,
+    forced: dict,           # {row_idx: word} — these rows are fixed
+    seed: int = 42,
+    time_limit: float = 2.0,
+    include_words: Optional[dict] = None,
+) -> Optional[list]:
+    """
+    Like solve(), but one or more rows are pinned to a specific word.
+    Free rows still use the shuffled word list (include words front-loaded).
+    """
+    rng      = random.Random(seed)
+    deadline = time.time() + time_limit
+    groups   = square_groups(widths)
+
+    groups_above: list[list] = [[] for _ in range(len(widths))]
+    for g in groups:
+        TL, TR, BR, BL = g
+        groups_above[BL[0]].append(g)
+
+    valid_given_top: dict[tuple, set[tuple]] = defaultdict(set)
+    for (tl, tr, br, bl) in valid_sq:
+        valid_given_top[(tl, tr)].add((br, bl))
+
+    inc_set = set(forced.values()) | set(include_words or {})
+    shuffled: dict[int, list] = {}
+    for length, ws in word_by_len.items():
+        rest  = rng.sample([w for w in ws if w not in inc_set], len([w for w in ws if w not in inc_set]))
+        front = [w for w in inc_set if len(w) == length and w in set(ws) and w not in forced.values()]
+        shuffled[length] = front + rest
+
+    def backtrack(row: int, placed: list) -> Optional[list]:
+        if time.time() > deadline:
+            return None
+        if row == len(widths):
+            return placed
+
+        w = widths[row]
+        if row in forced:
+            fw = forced[row]
+            candidates = [fw] if fw in set(word_by_len.get(w, [])) else []
+        else:
+            candidates = shuffled.get(w, [])
+
+        constraints = []
+        for (TL, TR, BR, BL) in groups_above[row]:
+            tl = placed[TL[0]][TL[1]]
+            tr = placed[TR[0]][TR[1]]
+            constraints.append((BL[1], BR[1], valid_given_top.get((tl, tr), set())))
+
+        placed_set = set(placed)
+        for word in candidates:
             if word in placed_set:
                 continue
             if all(
@@ -348,6 +459,12 @@ def main() -> None:
     ap.add_argument("--tries",      type=int,   default=20,
                     help="Seed variations to attempt (default: 20)")
     ap.add_argument("--png", metavar="FILE", help="Save solution + puzzle PNGs")
+    ap.add_argument(
+        "--include", metavar="WORDS", default="",
+        help='Semicolon-separated theme words, e.g. "LOVE; HAPPY: birthday wish; MAMA"',
+    )
+    ap.add_argument("--min-included", type=int, default=2,
+                    help="Minimum theme words that must appear (default: 2)")
     args = ap.parse_args()
 
     widths = args.widths
@@ -368,31 +485,111 @@ def main() -> None:
     for word in word_scores:
         word_by_len[len(word)].append(word)
 
+    include_words = _parse_include(args.include) if args.include else {}
+    if include_words:
+        print(f"Theme words: {', '.join(include_words)}")
+        # Add include words to the word pool and augment valid squares
+        for word in include_words:
+            w = len(word)
+            if word not in set(word_by_len.get(w, [])):
+                word_by_len[w] = [word] + word_by_len.get(w, [])
+
     word_set_4 = set(word_by_len.get(4, []))
     valid_sq   = build_valid_squares(word_set_4)
 
     groups     = square_groups(widths)
     total_cells = sum(widths)
     print(f"Grid: {widths}  —  {total_cells} cells, {len(groups)} square words")
-    print(f"Solving", end="", flush=True)
+    start     = time.time()
+    result    = None
+    found_inc = []
 
-    start  = time.time()
-    result = None
-    for attempt in range(args.tries):
-        seed   = args.seed + attempt
-        result = solve(
-            widths, word_by_len, valid_sq,
-            seed=seed,
-            time_limit=args.time_limit / args.tries,
+    if include_words:
+        # Build forced-word search plans.
+        # Singles: one include word pinned to one matching-width row.
+        # Pairs: two distinct include words pinned to two distinct rows.
+        forceable_singles = [
+            (inc_word, row_idx)
+            for inc_word in include_words
+            for row_idx, row_w in enumerate(widths)
+            if len(inc_word) == row_w and inc_word in set(word_by_len.get(row_w, []))
+        ]
+        forceable_pairs = [
+            {r1: w1, r2: w2}
+            for i, (w1, r1) in enumerate(forceable_singles)
+            for (w2, r2) in forceable_singles[i + 1:]
+            if r1 != r2 and w1 != w2
+        ]
+
+        # Try pairs first — any valid solution automatically has ≥2 include words.
+        # Then singles — check whether a square word supplies the second include.
+        search_plan: list[tuple] = (
+            [(fm, '+'.join(f"{v}@{chr(65+k)}" for k, v in sorted(fm.items())))
+             for fm in forceable_pairs]
+            + [({r: w}, f"{w}@{chr(65+r)}") for w, r in forceable_singles]
         )
-        if result:
-            print(f"  → found (seed {seed}, {time.time() - start:.2f}s)")
+
+        n_comb       = max(1, len(search_plan))
+        tries_each   = max(args.tries, 20)
+        time_each    = max(0.5, args.time_limit / (n_comb * tries_each))
+
+        for forced_map, label in search_plan:
+            print(f"\n  Forcing {label} …", end="", flush=True)
+            for attempt in range(tries_each):
+                if time.time() - start > args.time_limit:
+                    break
+                seed      = args.seed + attempt
+                candidate = solve_forced(
+                    widths, word_by_len, valid_sq, forced_map,
+                    seed=seed, time_limit=time_each,
+                    include_words=include_words,
+                )
+                if candidate is None:
+                    print(".", end="", flush=True)
+                    continue
+                fi = _found_include(widths, candidate, word_set_4, include_words)
+                if len(fi) >= args.min_included:
+                    result    = candidate
+                    found_inc = fi
+                    print(f"  → found (seed {seed}, {time.time()-start:.2f}s)")
+                    break
+                print("x", end="", flush=True)
+            if result:
+                break
+
+    # Fallback (or no include words): regular random search.
+    if not result:
+        print(f"\n  {'Fallback: ' if include_words else ''}random search …",
+              end="", flush=True)
+        for attempt in range(args.tries):
+            if time.time() - start > args.time_limit:
+                break
+            seed      = args.seed + attempt
+            candidate = solve(
+                widths, word_by_len, valid_sq,
+                seed=seed,
+                time_limit=args.time_limit / args.tries,
+                include_words=include_words,
+            )
+            if candidate is None:
+                print(".", end="", flush=True)
+                continue
+            if include_words:
+                fi = _found_include(widths, candidate, word_set_4, include_words)
+                if len(fi) < args.min_included:
+                    print("x", end="", flush=True)
+                    continue
+                found_inc = fi
+            result = candidate
+            print(f"  → found (seed {seed}, {time.time()-start:.2f}s)")
             break
-        print(".", end="", flush=True)
-    else:
-        print("\nNo solution found — try a different --seed or looser --min-score.")
+
+    if not result:
+        print("\nNo solution found — try a different --seed, more --tries, or looser --min-score.")
         sys.exit(1)
 
+    if found_inc:
+        print(f"\n  Theme words included: {', '.join(found_inc)}")
     display(widths, result, word_set_4)
     if args.png:
         _emit_pngs(widths, result, word_set_4, args.png)
