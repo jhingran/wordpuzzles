@@ -463,6 +463,7 @@ def draw_image(
     reveal_col: Optional[int] = None,   # 0-based absolute col to pre-fill in puzzle
     acrostic_rows: Optional[set] = None,  # row indices whose first letter is highlighted (solution)
     acrostic_hint: Optional[str] = None,  # instruction line shown in puzzle about hidden message
+    title: Optional[str] = None,          # override default "INTERLOCKING SQUARES"
 ) -> None:
     if not _PIL:
         print("  Pillow not installed — skipping PNG.")
@@ -517,7 +518,7 @@ def draw_image(
     f_label    = _font(14)
     f_instr    = _font(10)
 
-    title = "INTERLOCKING SQUARES"
+    title = title or "INTERLOCKING SQUARES"
     draw.text((img_w // 2, PAD + TITLE_H // 2), title,
               fill='#1A1A2E', font=f_title, anchor='mm')
 
@@ -665,17 +666,18 @@ def _emit_pngs(
     theme_cells: Optional[set] = None, show_rows: Optional[set] = None,
     reveal_col: Optional[int] = None,
     acrostic_rows: Optional[set] = None, acrostic_hint: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> None:
     from pathlib import Path as _Path
     p = _Path(base_path)
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_solution')), solved=True,
-               theme_cells=theme_cells, acrostic_rows=acrostic_rows)
+               theme_cells=theme_cells, acrostic_rows=acrostic_rows, title=title)
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_puzzle')), solved=False,
                clues=clues, clue_seed=clue_seed,
                theme_cells=None, show_rows=show_rows, reveal_col=reveal_col,
-               acrostic_hint=acrostic_hint)  # circles only in solution
+               acrostic_hint=acrostic_hint, title=title)  # circles only in solution
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
@@ -728,7 +730,9 @@ def main() -> None:
     ap.add_argument("--col", type=int, default=None, metavar="N",
                     help="Pre-fill column N (1-indexed) in puzzle image as a starter strip.")
     ap.add_argument("--acrostic", metavar="TEXT", default=None,
-                    help="Hidden message: first letters of unclued rows must spell TEXT.")
+                    help="Hidden message: first letters of rows must spell TEXT.")
+    ap.add_argument("--title", metavar="TEXT", default=None,
+                    help="Override puzzle title (shown in both PNGs).")
     ap.add_argument(
         "--include", metavar="WORDS", default="",
         help='Semicolon-separated theme words, e.g. "LOVE; HAPPY: birthday wish; MAMA"',
@@ -762,9 +766,10 @@ def main() -> None:
     # Compute acrostic constraint before solving (first_letter_constraint feeds the solver)
     show_rows = (set() if args.rows == [] else
                  {r.upper() for r in args.rows} if args.rows is not None else None)
-    unclued_indices = ([i for i in range(len(widths))
-                        if show_rows is not None and chr(ord('A') + i) not in show_rows]
-                       if show_rows is not None else [])
+    # Unclued rows: those not in --rows. If no --rows flag, all rows are candidates.
+    unclued_indices = (list(range(len(widths))) if show_rows is None else
+                       [i for i in range(len(widths))
+                        if chr(ord('A') + i) not in show_rows])
     first_letter_constraint: dict = {}
     acrostic_hint = None
     acrostic_rows = None
@@ -772,7 +777,7 @@ def main() -> None:
         acro = args.acrostic.upper().replace(' ', '')
         if len(acro) != len(unclued_indices):
             print(f"Error: --acrostic '{acro}' has {len(acro)} letters but "
-                  f"{len(unclued_indices)} unclued rows "
+                  f"{len(unclued_indices)} target rows "
                   f"({', '.join(chr(65+i) for i in unclued_indices)}).")
             sys.exit(1)
         for j, ri in enumerate(unclued_indices):
@@ -922,7 +927,8 @@ def main() -> None:
                    clues=clues, clue_seed=args.seed,
                    theme_cells=theme_cells or None, show_rows=show_rows,
                    reveal_col=reveal_col,
-                   acrostic_rows=acrostic_rows, acrostic_hint=acrostic_hint)
+                   acrostic_rows=acrostic_rows, acrostic_hint=acrostic_hint,
+                   title=args.title)
 
 
 if __name__ == "__main__":
