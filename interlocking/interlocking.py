@@ -410,8 +410,14 @@ def generate_clues(sq_words: list, include_words: Optional[dict] = None) -> dict
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
         prompt = (
-            "Give a short, precise crossword-style clue (3–7 words) for each word below. "
-            "One per line, format: WORD: clue. No extra commentary.\n\n"
+            "Give a short crossword-style clue (3–7 words) for each word below.\n"
+            "Rules:\n"
+            "- Prefer simple definitions or wordplay over factual references.\n"
+            "- For common words, give a direct definition.\n"
+            "- For proper names, use only WIDELY KNOWN, VERIFIABLE facts "
+            "(e.g. 'Olympic javelin champion Sanderson' for TESSA). "
+            "Do NOT invent show/film/character references you are not certain about.\n"
+            "- One per line, format: WORD: clue. No extra commentary.\n\n"
             + "\n".join(need_api)
         )
         resp = client.messages.create(
