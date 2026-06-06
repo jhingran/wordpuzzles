@@ -452,6 +452,7 @@ def draw_image(
     clue_seed: int = 0,
     theme_cells: Optional[set] = None,  # {(row, col)} cells to mark with an inscribed circle
     show_rows: Optional[set] = None,    # None=all, empty set=none, {'B','E'}=those rows only
+    reveal_col: Optional[int] = None,   # 0-based absolute col to pre-fill in puzzle
 ) -> None:
     if not _PIL:
         print("  Pillow not installed — skipping PNG.")
@@ -525,8 +526,10 @@ def draw_image(
     for i, w in enumerate(widths):
         for j in range(w):
             rect = cell_rect(i, j)
-            draw.rectangle(rect, fill='white', outline='#1A1A2E', width=BW)
-            if solved and words:
+            is_given = (not solved) and words and (reveal_col is not None) and (offsets[i] + j == reveal_col)
+            fill = '#D8D8D8' if is_given else 'white'
+            draw.rectangle(rect, fill=fill, outline='#1A1A2E', width=BW)
+            if (solved or is_given) and words:
                 cx, cy = cell_center(i, j)
                 draw.text((cx, cy), words[i][j], fill='#1A1A2E',
                           font=f_letter, anchor='mm')
@@ -592,6 +595,8 @@ def draw_image(
              else f"Fill in rows A–F. Clues given for rows {', '.join(sorted(show_rows))}."
              if show_rows is not None
              else "Fill in rows A–F. Each row is a word.", '#1A1A2E'),
+            *([(f"Shaded cells (column {reveal_col + 1}) are pre-filled.", '#444444')]
+              if reveal_col is not None else []),
             ("Green / blue / red clues go around dots of the same colour.", '#1A1A2E'),
             ("Each answer is 4 letters, winding around the dot —", '#444444'),
             ("clockwise or anticlockwise from any corner. Clues in random order.", '#444444'),
@@ -645,6 +650,7 @@ def _emit_pngs(
     widths: list, words: list, word_set_4: set, base_path: str,
     clues: Optional[dict] = None, clue_seed: int = 0,
     theme_cells: Optional[set] = None, show_rows: Optional[set] = None,
+    reveal_col: Optional[int] = None,
 ) -> None:
     from pathlib import Path as _Path
     p = _Path(base_path)
@@ -654,7 +660,7 @@ def _emit_pngs(
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_puzzle')), solved=False,
                clues=clues, clue_seed=clue_seed,
-               theme_cells=None, show_rows=show_rows)  # circles only in solution
+               theme_cells=None, show_rows=show_rows, reveal_col=reveal_col)  # circles only in solution
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
@@ -704,6 +710,8 @@ def main() -> None:
     ap.add_argument("--png", metavar="FILE", help="Save solution + puzzle PNGs")
     ap.add_argument("--rows", nargs="*", metavar="ROW",
                     help="Row labels to show clues for, e.g. --rows B E. Default: all. --rows alone: none.")
+    ap.add_argument("--col", type=int, default=None, metavar="N",
+                    help="Pre-fill column N (1-indexed) in puzzle image as a starter strip.")
     ap.add_argument(
         "--include", metavar="WORDS", default="",
         help='Semicolon-separated theme words, e.g. "LOVE; HAPPY: birthday wish; MAMA"',
@@ -869,9 +877,11 @@ def main() -> None:
                 if sq_w in inc_set:
                     theme_cells.update([(TL[0], TL[1]), (TR[0], TR[1]),
                                         (BR[0], BR[1]), (BL[0], BL[1])])
+        reveal_col = (args.col - 1) if args.col is not None else None
         _emit_pngs(widths, result, word_set_4, args.png,
                    clues=clues, clue_seed=args.seed,
-                   theme_cells=theme_cells or None, show_rows=show_rows)
+                   theme_cells=theme_cells or None, show_rows=show_rows,
+                   reveal_col=reveal_col)
 
 
 if __name__ == "__main__":
