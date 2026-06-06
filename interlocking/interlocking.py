@@ -161,6 +161,7 @@ def solve(
     widths: list[int],
     word_by_len: dict[int, list[str]],
     valid_sq: set[tuple],
+    word_set_4: set[str],
     seed: int = 42,
     time_limit: float = 60.0,
     include_words: Optional[dict] = None,
@@ -195,7 +196,7 @@ def solve(
         front = [w for w in inc_set if len(w) == length and w in set(ws)]
         shuffled[length] = front + rest
 
-    def backtrack(row: int, placed: list) -> Optional[list]:
+    def backtrack(row: int, placed: list, seen_sq: frozenset) -> Optional[list]:
         if time.time() > deadline:
             return None
         if row == len(widths):
@@ -215,17 +216,32 @@ def solve(
         for word in base:
             if word in placed_set:
                 continue
-            if all(
+            if not all(
                 (word[br_col], word[bl_col]) in vp
                 for bl_col, br_col, vp in constraints
             ):
-                result = backtrack(row + 1, placed + [word])
-                if result is not None:
-                    return result
+                continue
+            # Reject if any newly formed square word duplicates an earlier one
+            new_sqs: list = []
+            dup = False
+            for (TL, TR, BR, BL) in groups_above[row]:
+                sq = find_square_word(
+                    placed[TL[0]][TL[1]], placed[TR[0]][TR[1]],
+                    word[BR[1]], word[BL[1]], word_set_4,
+                )
+                if sq in seen_sq or sq in new_sqs:
+                    dup = True
+                    break
+                new_sqs.append(sq)
+            if dup:
+                continue
+            result = backtrack(row + 1, placed + [word], seen_sq | frozenset(new_sqs))
+            if result is not None:
+                return result
 
         return None
 
-    return backtrack(0, [])
+    return backtrack(0, [], frozenset())
 
 
 # ── Targeted CSP solver (forced row words) ───────────────────────────────────
@@ -234,6 +250,7 @@ def solve_forced(
     widths: list,
     word_by_len: dict,
     valid_sq: set,
+    word_set_4: set,
     forced: dict,           # {row_idx: word} — these rows are fixed
     seed: int = 42,
     time_limit: float = 2.0,
@@ -263,7 +280,7 @@ def solve_forced(
         front = [w for w in inc_set if len(w) == length and w in set(ws) and w not in forced.values()]
         shuffled[length] = front + rest
 
-    def backtrack(row: int, placed: list) -> Optional[list]:
+    def backtrack(row: int, placed: list, seen_sq: frozenset) -> Optional[list]:
         if time.time() > deadline:
             return None
         if row == len(widths):
@@ -286,17 +303,31 @@ def solve_forced(
         for word in candidates:
             if word in placed_set:
                 continue
-            if all(
+            if not all(
                 (word[br_col], word[bl_col]) in vp
                 for bl_col, br_col, vp in constraints
             ):
-                result = backtrack(row + 1, placed + [word])
-                if result is not None:
-                    return result
+                continue
+            new_sqs: list = []
+            dup = False
+            for (TL, TR, BR, BL) in groups_above[row]:
+                sq = find_square_word(
+                    placed[TL[0]][TL[1]], placed[TR[0]][TR[1]],
+                    word[BR[1]], word[BL[1]], word_set_4,
+                )
+                if sq in seen_sq or sq in new_sqs:
+                    dup = True
+                    break
+                new_sqs.append(sq)
+            if dup:
+                continue
+            result = backtrack(row + 1, placed + [word], seen_sq | frozenset(new_sqs))
+            if result is not None:
+                return result
 
         return None
 
-    return backtrack(0, [])
+    return backtrack(0, [], frozenset())
 
 
 # ── PNG output ───────────────────────────────────────────────────────────────
@@ -737,7 +768,7 @@ def main() -> None:
                     break
                 seed      = args.seed + attempt
                 candidate = solve_forced(
-                    widths, word_by_len, valid_sq, forced_map,
+                    widths, word_by_len, valid_sq, word_set_4, forced_map,
                     seed=seed, time_limit=time_each,
                     include_words=include_words,
                 )
@@ -763,7 +794,7 @@ def main() -> None:
                 break
             seed      = args.seed + attempt
             candidate = solve(
-                widths, word_by_len, valid_sq,
+                widths, word_by_len, valid_sq, word_set_4,
                 seed=seed,
                 time_limit=args.time_limit / args.tries,
                 include_words=include_words,
