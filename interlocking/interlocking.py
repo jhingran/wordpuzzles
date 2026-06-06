@@ -445,6 +445,7 @@ def draw_image(
     clues: Optional[dict] = None,   # {word: clue_text} — triggers clue panel
     clue_seed: int = 0,
     theme_cells: Optional[set] = None,  # {(row, col)} cells to mark with an inscribed circle
+    no_rows: bool = False,              # omit row-word clues from panel
 ) -> None:
     if not _PIL:
         print("  Pillow not installed — skipping PNG.")
@@ -478,8 +479,8 @@ def draw_image(
 
     if has_panel:
         n_per_reg = sum(1 for r in regions if r == 'green')
-        clue_h    = (INSTR_H + SEC_GAP
-                     + HDR_H + n_rows * LINE_H + SEC_GAP
+        rows_h    = 0 if no_rows else (HDR_H + n_rows * LINE_H + SEC_GAP)
+        clue_h    = (INSTR_H + SEC_GAP + rows_h
                      + 3 * (HDR_H + n_per_reg * LINE_H) + 2 * SEC_GAP)
         img_w     = GX + grid_w + CLUE_GAP + CLUE_W + PAD
         img_h     = PAD + TITLE_H + max(grid_h, clue_h) + PAD
@@ -580,7 +581,7 @@ def draw_image(
         iy = py + 10
         ls = 15   # line spacing
         for txt, col in [
-            ("Fill in rows A–F. Each row is a word.", '#1A1A2E'),
+            ("Fill in rows A–F using corner clues only." if no_rows else "Fill in rows A–F. Each row is a word.", '#1A1A2E'),
             ("Green / blue / red clues go around dots of the same colour.", '#1A1A2E'),
             ("Each answer is 4 letters, winding around the dot —", '#444444'),
             ("clockwise or anticlockwise from any corner. Clues in random order.", '#444444'),
@@ -589,22 +590,23 @@ def draw_image(
             iy += ls
         py += INSTR_H + SEC_GAP
 
-        # ROWS section
-        draw.rectangle([px, py, px + CLUE_W, py + HDR_H], fill='#444444')
-        draw.text((px + CLUE_W // 2, py + HDR_H // 2), 'ROWS',
-                  fill='white', font=f_clue_hdr, anchor='mm')
-        py += HDR_H
-        for i, w in enumerate(widths):
-            row_label = chr(ord('A') + i)
-            row_word  = words[i] if isinstance(words[i], str) else ''.join(words[i])
-            clue_txt  = clues.get(row_word, f'({w})')
-            line      = f"{row_label} ({w})  {clue_txt}"
-            if len(line) > 42:
-                line = line[:40] + '…'
-            draw.text((px + 8, py + LINE_H // 2), line,
-                      fill='#1A1A2E', font=f_clue, anchor='lm')
-            py += LINE_H
-        py += SEC_GAP
+        # ROWS section (omitted in --no-rows mode)
+        if not no_rows:
+            draw.rectangle([px, py, px + CLUE_W, py + HDR_H], fill='#444444')
+            draw.text((px + CLUE_W // 2, py + HDR_H // 2), 'ROWS',
+                      fill='white', font=f_clue_hdr, anchor='mm')
+            py += HDR_H
+            for i, w in enumerate(widths):
+                row_label = chr(ord('A') + i)
+                row_word  = words[i] if isinstance(words[i], str) else ''.join(words[i])
+                clue_txt  = clues.get(row_word, f'({w})')
+                line      = f"{row_label} ({w})  {clue_txt}"
+                if len(line) > 42:
+                    line = line[:40] + '…'
+                draw.text((px + 8, py + LINE_H // 2), line,
+                          fill='#1A1A2E', font=f_clue, anchor='lm')
+                py += LINE_H
+            py += SEC_GAP
 
         for reg in ('green', 'blue', 'red'):
             hdr_color = _REGION_COLOR[reg]
@@ -630,7 +632,7 @@ def draw_image(
 def _emit_pngs(
     widths: list, words: list, word_set_4: set, base_path: str,
     clues: Optional[dict] = None, clue_seed: int = 0,
-    theme_cells: Optional[set] = None,
+    theme_cells: Optional[set] = None, no_rows: bool = False,
 ) -> None:
     from pathlib import Path as _Path
     p = _Path(base_path)
@@ -639,7 +641,8 @@ def _emit_pngs(
                theme_cells=theme_cells)
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_puzzle')), solved=False,
-               clues=clues, clue_seed=clue_seed, theme_cells=theme_cells)
+               clues=clues, clue_seed=clue_seed,
+               theme_cells=theme_cells, no_rows=no_rows)
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
@@ -687,6 +690,8 @@ def main() -> None:
     ap.add_argument("--tries",      type=int,   default=20,
                     help="Seed variations to attempt (default: 20)")
     ap.add_argument("--png", metavar="FILE", help="Save solution + puzzle PNGs")
+    ap.add_argument("--no-rows", action="store_true",
+                    help="Puzzle image omits row-word clues (harder mode)")
     ap.add_argument(
         "--include", metavar="WORDS", default="",
         help='Semicolon-separated theme words, e.g. "LOVE; HAPPY: birthday wish; MAMA"',
@@ -831,7 +836,8 @@ def main() -> None:
         import os
         if os.environ.get('ANTHROPIC_API_KEY'):
             print("  Generating clues …", end="", flush=True)
-            clues = generate_clues(list(result) + sq_words, include_words)
+            words_for_clues = sq_words if args.no_rows else list(result) + sq_words
+            clues = generate_clues(words_for_clues, include_words)
             print(" done")
         else:
             clues = None
@@ -849,7 +855,7 @@ def main() -> None:
                                         (BR[0], BR[1]), (BL[0], BL[1])])
         _emit_pngs(widths, result, word_set_4, args.png,
                    clues=clues, clue_seed=args.seed,
-                   theme_cells=theme_cells or None)
+                   theme_cells=theme_cells or None, no_rows=args.no_rows)
 
 
 if __name__ == "__main__":
