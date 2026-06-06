@@ -642,7 +642,7 @@ def _emit_pngs(
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_puzzle')), solved=False,
                clues=clues, clue_seed=clue_seed,
-               theme_cells=theme_cells, no_rows=no_rows)
+               theme_cells=None, no_rows=no_rows)  # circles only in solution
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
