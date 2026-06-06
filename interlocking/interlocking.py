@@ -165,6 +165,7 @@ def solve(
     seed: int = 42,
     time_limit: float = 60.0,
     include_words: Optional[dict] = None,
+    first_letter: dict = {},          # {row_idx: required_first_letter}
 ) -> Optional[list]:
     """
     Backtracking CSP: one word per row, satisfying all square-group constraints.
@@ -204,6 +205,9 @@ def solve(
 
         w    = widths[row]
         base = shuffled.get(w, [])
+        if row in first_letter:
+            req = first_letter[row]
+            base = [w for w in base if w and w[0] == req]
 
         # Build pair-constraints from the row above
         constraints = []   # (bl_col, br_col, valid_pairs_set)
@@ -255,6 +259,7 @@ def solve_forced(
     seed: int = 42,
     time_limit: float = 2.0,
     include_words: Optional[dict] = None,
+    first_letter: dict = {},          # {row_idx: required_first_letter}
 ) -> Optional[list]:
     """
     Like solve(), but one or more rows are pinned to a specific word.
@@ -292,6 +297,9 @@ def solve_forced(
             candidates = [fw] if fw in set(word_by_len.get(w, [])) else []
         else:
             candidates = shuffled.get(w, [])
+            if row in first_letter:
+                req = first_letter[row]
+                candidates = [c for c in candidates if c and c[0] == req]
 
         constraints = []
         for (TL, TR, BR, BL) in groups_above[row]:
@@ -453,6 +461,8 @@ def draw_image(
     theme_cells: Optional[set] = None,  # {(row, col)} cells to mark with an inscribed circle
     show_rows: Optional[set] = None,    # None=all, empty set=none, {'B','E'}=those rows only
     reveal_col: Optional[int] = None,   # 0-based absolute col to pre-fill in puzzle
+    acrostic_rows: Optional[set] = None,  # row indices whose first letter is highlighted (solution)
+    acrostic_hint: Optional[str] = None,  # instruction line shown in puzzle about hidden message
 ) -> None:
     if not _PIL:
         print("  Pillow not installed — skipping PNG.")
@@ -531,7 +541,9 @@ def draw_image(
             draw.rectangle(rect, fill=fill, outline='#1A1A2E', width=BW)
             if (solved or is_given) and words:
                 cx, cy = cell_center(i, j)
-                draw.text((cx, cy), words[i][j], fill='#1A1A2E',
+                is_acrostic_first = solved and acrostic_rows and i in acrostic_rows and j == 0
+                letter_color = '#B8001F' if is_acrostic_first else '#1A1A2E'
+                draw.text((cx, cy), words[i][j], fill=letter_color,
                           font=f_letter, anchor='mm')
 
     # ── Row labels A–F ──
@@ -589,12 +601,13 @@ def draw_image(
         # Instruction text (no box)
         ix = px + 10
         iy = py + 10
-        ls = 15   # line spacing
+        ls = 12   # line spacing
         for txt, col in [
             ("Fill in rows A–F using corner clues only." if show_rows == set()
              else f"Fill in rows A–F. Clues given for rows {', '.join(sorted(show_rows))}."
              if show_rows is not None
              else "Fill in rows A–F. Each row is a word.", '#1A1A2E'),
+            *([(acrostic_hint, '#8B0000')] if acrostic_hint else []),
             *([(f"Shaded cells (column {reveal_col + 1}) are pre-filled.", '#444444')]
               if reveal_col is not None else []),
             ("Green / blue / red clues go around dots of the same colour.", '#1A1A2E'),
@@ -651,16 +664,18 @@ def _emit_pngs(
     clues: Optional[dict] = None, clue_seed: int = 0,
     theme_cells: Optional[set] = None, show_rows: Optional[set] = None,
     reveal_col: Optional[int] = None,
+    acrostic_rows: Optional[set] = None, acrostic_hint: Optional[str] = None,
 ) -> None:
     from pathlib import Path as _Path
     p = _Path(base_path)
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_solution')), solved=True,
-               theme_cells=theme_cells)
+               theme_cells=theme_cells, acrostic_rows=acrostic_rows)
     draw_image(widths, words, word_set_4,
                str(p.with_stem(p.stem + '_puzzle')), solved=False,
                clues=clues, clue_seed=clue_seed,
-               theme_cells=None, show_rows=show_rows, reveal_col=reveal_col)  # circles only in solution
+               theme_cells=None, show_rows=show_rows, reveal_col=reveal_col,
+               acrostic_hint=acrostic_hint)  # circles only in solution
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
@@ -712,6 +727,8 @@ def main() -> None:
                     help="Row labels to show clues for, e.g. --rows B E. Default: all. --rows alone: none.")
     ap.add_argument("--col", type=int, default=None, metavar="N",
                     help="Pre-fill column N (1-indexed) in puzzle image as a starter strip.")
+    ap.add_argument("--acrostic", metavar="TEXT", default=None,
+                    help="Hidden message: first letters of unclued rows must spell TEXT.")
     ap.add_argument(
         "--include", metavar="WORDS", default="",
         help='Semicolon-separated theme words, e.g. "LOVE; HAPPY: birthday wish; MAMA"',
@@ -741,6 +758,29 @@ def main() -> None:
     include_words = _parse_include(args.include) if args.include else {}
     if include_words:
         print(f"Theme words: {', '.join(include_words)}")
+
+    # Compute acrostic constraint before solving (first_letter_constraint feeds the solver)
+    show_rows = (set() if args.rows == [] else
+                 {r.upper() for r in args.rows} if args.rows is not None else None)
+    unclued_indices = ([i for i in range(len(widths))
+                        if show_rows is not None and chr(ord('A') + i) not in show_rows]
+                       if show_rows is not None else [])
+    first_letter_constraint: dict = {}
+    acrostic_hint = None
+    acrostic_rows = None
+    if args.acrostic:
+        acro = args.acrostic.upper().replace(' ', '')
+        if len(acro) != len(unclued_indices):
+            print(f"Error: --acrostic '{acro}' has {len(acro)} letters but "
+                  f"{len(unclued_indices)} unclued rows "
+                  f"({', '.join(chr(65+i) for i in unclued_indices)}).")
+            sys.exit(1)
+        for j, ri in enumerate(unclued_indices):
+            first_letter_constraint[ri] = acro[j]
+        row_labels = ', '.join(chr(65 + i) for i in unclued_indices)
+        acrostic_hint = f"First letters of rows {row_labels} spell a hidden message."
+        acrostic_rows = set(unclued_indices)
+        print(f"  Acrostic: {acro}  (rows {row_labels})")
         # Add include words to the word pool and augment valid squares
         for word in include_words:
             w = len(word)
@@ -796,6 +836,7 @@ def main() -> None:
                     widths, word_by_len, valid_sq, word_set_4, forced_map,
                     seed=seed, time_limit=time_each,
                     include_words=include_words,
+                    first_letter=first_letter_constraint,
                 )
                 if candidate is None:
                     print(".", end="", flush=True)
@@ -823,6 +864,7 @@ def main() -> None:
                 seed=seed,
                 time_limit=args.time_limit / args.tries,
                 include_words=include_words,
+                first_letter=first_letter_constraint,
             )
             if candidate is None:
                 print(".", end="", flush=True)
@@ -854,8 +896,6 @@ def main() -> None:
             for (TL, TR, BR, BL) in square_groups(widths)
         ]
         import os
-        show_rows = (set() if args.rows == [] else
-                     {r.upper() for r in args.rows} if args.rows is not None else None)
         if os.environ.get('ANTHROPIC_API_KEY'):
             print("  Generating clues …", end="", flush=True)
             row_words_for_clues = (list(result) if show_rows is None else
@@ -881,7 +921,8 @@ def main() -> None:
         _emit_pngs(widths, result, word_set_4, args.png,
                    clues=clues, clue_seed=args.seed,
                    theme_cells=theme_cells or None, show_rows=show_rows,
-                   reveal_col=reveal_col)
+                   reveal_col=reveal_col,
+                   acrostic_rows=acrostic_rows, acrostic_hint=acrostic_hint)
 
 
 if __name__ == "__main__":
