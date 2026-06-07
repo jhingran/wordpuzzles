@@ -775,16 +775,22 @@ def main() -> None:
     acrostic_rows = None
     if args.acrostic:
         acro = args.acrostic.upper().replace(' ', '')
-        if len(acro) != len(unclued_indices):
+        # A full-grid acrostic (length == number of rows) constrains every row,
+        # even clued ones — the clue just reveals those first letters to the solver.
+        acro_indices = (list(range(len(widths)))
+                        if len(acro) == len(widths) else unclued_indices)
+        if len(acro) != len(acro_indices):
             print(f"Error: --acrostic '{acro}' has {len(acro)} letters but "
-                  f"{len(unclued_indices)} target rows "
-                  f"({', '.join(chr(65+i) for i in unclued_indices)}).")
+                  f"{len(acro_indices)} target rows "
+                  f"({', '.join(chr(65+i) for i in acro_indices)}). "
+                  f"Use {len(unclued_indices)} letters for unclued rows only, "
+                  f"or {len(widths)} for all rows.")
             sys.exit(1)
-        for j, ri in enumerate(unclued_indices):
+        for j, ri in enumerate(acro_indices):
             first_letter_constraint[ri] = acro[j]
-        row_labels = ', '.join(chr(65 + i) for i in unclued_indices)
+        row_labels = ', '.join(chr(65 + i) for i in acro_indices)
         acrostic_hint = f"First letters of rows {row_labels} spell a hidden message."
-        acrostic_rows = set(unclued_indices)
+        acrostic_rows = set(acro_indices)
         print(f"  Acrostic: {acro}  (rows {row_labels})")
         # Add include words to the word pool and augment valid squares
         for word in include_words:
