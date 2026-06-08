@@ -94,3 +94,21 @@
   Command: python3 interlocking/interlocking.py --seed 900 --min-score 70 --acrostic WORDLE --col 4 --title '"NY Times Game" Interlocking Squares' --png interlocking/images/isq_wordle.png
 
 ════════════════════════════════════════════════════════════
+
+════════════════════════════════════════════════════════════
+  "HEARTS" Interlocking Squares  (seed 6, score≥70, --acrostic HEARTS --rows B E --col 4)
+════════════════════════════════════════════════════════════
+
+  Row A:          HID        ← H (acrostic)
+  Row B:      ESTEE          ← clued  center: T
+  Row C:  AMOUNTS            ← A (acrostic)  center: U
+  Row D:  RETREAT            ← R (acrostic)  center: E
+  Row E:      TOOLS          ← clued  center: L
+  Row F:          SPF        ← S (acrostic)
+
+  Hidden message: HEARTS  (first letters of all rows)
+  Center column (col 4): I · T · U · E · L · P
+  Theme square: RENU  (square #10, corners = RUNE)
+  Command: python3 interlocking/interlocking.py --seed 6 --min-score 70 --tries 1 --acrostic HEARTS --rows B E --col 4 --include "renu" --min-included 1 --title '"HEARTS" Interlocking Squares' --png interlocking/images/isq_hearts.png
+
+════════════════════════════════════════════════════════════

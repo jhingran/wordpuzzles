@@ -145,13 +145,14 @@ def _found_include(widths: list, words: list, word_set_4: set,
             found.append(w)
     groups = square_groups(widths)
     for (TL, TR, BR, BL) in groups:
-        sq = find_square_word(
-            words[TL[0]][TL[1]], words[TR[0]][TR[1]],
-            words[BR[0]][BR[1]], words[BL[0]][BL[1]],
-            word_set_4,
-        )
-        if sq in inc and sq not in found:
-            found.append(sq)
+        cw = (words[TL[0]][TL[1]] + words[TR[0]][TR[1]]
+              + words[BR[0]][BR[1]] + words[BL[0]][BL[1]])
+        # Check all 8 rotations (4 CW + 4 CCW) so RENU is found even if RUNE is canonical
+        for s in (cw, cw[::-1]):
+            for i in range(4):
+                rot = s[i:] + s[:i]
+                if rot in inc and rot not in found:
+                    found.append(rot)
     return found
 
 
@@ -294,6 +295,9 @@ def solve_forced(
         w = widths[row]
         if row in forced:
             fw = forced[row]
+            # Respect first_letter even for forced rows
+            if row in first_letter and fw and fw[0] != first_letter[row]:
+                return None
             candidates = [fw] if fw in set(word_by_len.get(w, [])) else []
         else:
             candidates = shuffled.get(w, [])
@@ -762,6 +766,11 @@ def main() -> None:
     include_words = _parse_include(args.include) if args.include else {}
     if include_words:
         print(f"Theme words: {', '.join(include_words)}")
+        # Add include words to pool now so word_set_4 / valid_sq include their rotations
+        for word in include_words:
+            w = len(word)
+            if word not in set(word_by_len.get(w, [])):
+                word_by_len[w] = [word] + word_by_len.get(w, [])
 
     # Compute acrostic constraint before solving (first_letter_constraint feeds the solver)
     show_rows = (set() if args.rows == [] else
@@ -792,11 +801,6 @@ def main() -> None:
         acrostic_hint = f"First letters of rows {row_labels} spell a hidden message."
         acrostic_rows = set(acro_indices)
         print(f"  Acrostic: {acro}  (rows {row_labels})")
-        # Add include words to the word pool and augment valid squares
-        for word in include_words:
-            w = len(word)
-            if word not in set(word_by_len.get(w, [])):
-                word_by_len[w] = [word] + word_by_len.get(w, [])
 
     word_set_4 = set(word_by_len.get(4, []))
     valid_sq   = build_valid_squares(word_set_4)
@@ -817,6 +821,8 @@ def main() -> None:
             for inc_word in include_words
             for row_idx, row_w in enumerate(widths)
             if len(inc_word) == row_w and inc_word in set(word_by_len.get(row_w, []))
+            and (row_idx not in first_letter_constraint
+                 or (inc_word and inc_word[0] == first_letter_constraint[row_idx]))
         ]
         forceable_pairs = [
             {r1: w1, r2: w2}
