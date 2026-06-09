@@ -614,12 +614,14 @@ def draw_image(
              else f"Fill in rows A–F. Clues given for rows {', '.join(sorted(show_rows))}."
              if show_rows is not None
              else "Fill in rows A–F. Each row is a word.", '#1A1A2E'),
-            *([(acrostic_hint, '#8B0000')] if acrostic_hint else []),
             *([(f"Shaded cells (column {reveal_col + 1}) are pre-filled.", '#444444')]
               if reveal_col is not None else []),
             ("Green / blue / red clues go around dots of the same colour.", '#1A1A2E'),
             ("Each answer is 4 letters, winding around the dot —", '#444444'),
             ("clockwise or anticlockwise from any corner. Clues in random order.", '#444444'),
+            *(([("When completed, the first letters form", '#8B0000'),
+                ("a hidden message from the puzzle title.", '#8B0000')])
+              if acrostic_hint else []),
         ]:
             draw.text((ix, iy), txt, fill=col, font=f_instr, anchor='lm')
             iy += ls
@@ -637,7 +639,7 @@ def draw_image(
                     continue
                 row_word  = words[i] if isinstance(words[i], str) else ''.join(words[i])
                 clue_txt  = clues.get(row_word, f'({w})')
-                line      = f"{row_label} ({w})  {clue_txt}"
+                line      = f"{row_label}  {clue_txt}"
                 if len(line) > 42:
                     line = line[:40] + '…'
                 draw.text((px + 8, py + LINE_H // 2), line,
@@ -800,7 +802,7 @@ def main() -> None:
         for j, ri in enumerate(acro_indices):
             first_letter_constraint[ri] = acro[j]
         row_labels = ', '.join(chr(65 + i) for i in acro_indices)
-        acrostic_hint = f"First letters of rows {row_labels} spell a hidden message."
+        acrostic_hint = "When completed, the first letters form a hidden message from the title of the puzzle."
         acrostic_rows = set(acro_indices)
         print(f"  Acrostic: {acro}  (rows {row_labels})")
 
