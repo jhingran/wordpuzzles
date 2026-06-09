@@ -424,6 +424,8 @@ def generate_clues(sq_words: list, include_words: Optional[dict] = None) -> dict
         prompt = (
             "Give a short crossword-style clue (3–7 words) for each word below.\n"
             "Rules:\n"
+            "- Return exactly ONE clue per word — the single best clue. "
+            "Never use 'or' to offer alternatives.\n"
             "- Prefer simple definitions or wordplay over factual references.\n"
             "- For common words, give a direct definition.\n"
             "- For proper names, use only WIDELY KNOWN, VERIFIABLE facts "
