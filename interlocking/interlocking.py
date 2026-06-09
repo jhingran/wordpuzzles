@@ -424,9 +424,10 @@ def generate_clues(sq_words: list, include_words: Optional[dict] = None) -> dict
         prompt = (
             "Give a short crossword-style clue (3–7 words) for each word below.\n"
             "Rules:\n"
-            "- Return exactly ONE clue per word — the single best clue. "
-            "Never use 'or' to offer alternatives.\n"
-            "- Prefer simple definitions or wordplay over factual references.\n"
+            "- Return exactly ONE clue per word — the single best definition or piece of wordplay.\n"
+            "- NEVER use the word 'or' anywhere in a clue. Not even for double definitions.\n"
+            "- Prefer a crisp single definition. For wordplay (anagram, hidden word, charade), "
+            "make sure the surface reading is natural.\n"
             "- For common words, give a direct definition.\n"
             "- For proper names, use only WIDELY KNOWN, VERIFIABLE facts "
             "(e.g. 'Olympic javelin champion Sanderson' for TESSA). "
@@ -445,7 +446,11 @@ def generate_clues(sq_words: list, include_words: Optional[dict] = None) -> dict
                 w, clue = line.split(':', 1)
                 w = w.strip().upper()
                 if w in set(need_api):
-                    result[w] = clue.strip()
+                    clue = clue.strip()
+                    # If 'or' slipped through, take only the first option
+                    if ' or ' in clue.lower():
+                        clue = clue.split(' or ')[0].strip().rstrip(',')
+                    result[w] = clue
     except Exception as e:
         print(f"  (Clue generation failed: {e})", file=sys.stderr)
 
