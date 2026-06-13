@@ -624,7 +624,7 @@ def draw_image(
             ("Green / blue / red clues go around dots of the same colour.", '#1A1A2E'),
             ("Each answer is 4 letters, winding around the dot —", '#444444'),
             ("clockwise or anticlockwise from any corner. Clues in random order.", '#444444'),
-            *(([("When completed, the first letters form", '#8B0000'),
+            *(([("When completed, the first letters of each row form", '#8B0000'),
                 ("a hidden message from the puzzle title.", '#8B0000')])
               if acrostic_hint else []),
         ]:
