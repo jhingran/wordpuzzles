@@ -13,14 +13,6 @@ See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for wordlist source, algorithm pa
 
 ---
 
-## Example: Interlocking Squares
-
-| Puzzle | Solution |
-|--------|----------|
-| ![Puzzle](examples/isq_enigma_puzzle.png) | ![Solution](examples/isq_enigma_solution.png) |
-
----
-
 ## Requirements
 
 - Python 3.10+
