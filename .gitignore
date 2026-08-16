@@ -1,6 +1,9 @@
 *.png
+!back_and_forth/images/hundred_spiral.png
+!back_and_forth/images/hundred_spiral_answer.png
 __pycache__/
 *.pyc
 .DS_Store
 interlocking/puzzles.txt
 snakes_ladders/puzzles.txt
+back_and_forth/puzzles_personal.py

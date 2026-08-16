@@ -54,6 +54,8 @@ python back_and_forth.py --include "LLAMA; NOD"
 | `--skip` | — | Semicolon-separated words to exclude |
 | `--png` | — | Output path; also writes `stem_answer.png` |
 | `--strategy` | auto | `random`, `extend`, or `join` (see below) |
+| `--aid-to-solve` | off | Auto-find one 3-letter hidden word per row; shade cells and add a clue row |
+| `--aid-words` | — | Semicolon-separated words to highlight (must read left to right in a grid row) |
 
 ---
 
@@ -159,13 +161,84 @@ Without an API key the PNG is still generated; clue slots are left blank.
 
 ---
 
+## Aid to solve
+
+Two modes:
+
+**Auto (`--aid-to-solve`):** the generator finds the highest-scoring 3-letter word per grid row (reading left or right) that isn't in the puzzle chains. Good for a first pass.
+
+**Manual (`--aid-words`):** the cluemaster picks the exact words. They must read left→right somewhere in a grid row. The cells are shaded light blue and the aid clues appear as a third row labelled "Aid to solve (left → right):".
+
+```bash
+# Auto-find one word per row
+python back_and_forth.py --length 100 --strategy join --aid-to-solve --png images/puzzle.png
+
+# Cluemaster-chosen words
+python back_and_forth.py --length 100 --strategy join \
+  --aid-words "MOD;ASP;TAP;UTI;ALE;CAL;LET;APE" --png images/puzzle.png
+```
+
+To call it programmatically:
+
+```python
+from back_and_forth import find_aid_words, generate_clues, draw_puzzle_png_spiral
+
+aid_words = find_aid_words(s, word_scores, fwd_words, bwd_words)
+# aid_words: list of (word, row, col_start, 'fwd'|'bwd') or None, one per grid row
+
+aid_word_strs = [item[0] for item in aid_words if item]
+aid_clue_dict = generate_clues(aid_word_strs, [])
+aid_clues = [aid_clue_dict.get(item[0], '—') if item else '—' for item in aid_words]
+
+draw_puzzle_png_spiral(
+    fwd_words, bwd_words, s, fwd_cuts, bwd_cuts, clues,
+    'images/puzzle_spiral.png', solved=False,
+    aid_words=aid_words, aid_clues=aid_clues,
+)
+```
+
+The spiral layout (used automatically for puzzles longer than 30 letters) displays three clue rows:
+- **↻ Clockwise:** clues in reading order from top-left
+- **↺ Anticlockwise:** clues in reading order from center
+- **Aid to solve:** one clue per grid row, top to bottom
+
+---
+
+## Rendering saved puzzles
+
+Finished puzzles are stored in `puzzles_data.py` so they can be re-rendered without re-running the search. PNGs are gitignored, so run this once after cloning to produce them:
+
+```python
+from back_and_forth import draw_puzzle_png_spiral
+from puzzles_data import PUZZLES
+
+p = PUZZLES['hundred']
+draw_puzzle_png_spiral(
+    p['fwd_words'], p['bwd_words'], p['s'],
+    p['fwd_cuts'],  p['bwd_cuts'],  p['clues'],
+    'images/hundred_spiral.png',        solved=False,
+    aid_words=p['aid_words'], aid_clues=p['aid_clues'],
+)
+draw_puzzle_png_spiral(
+    p['fwd_words'], p['bwd_words'], p['s'],
+    p['fwd_cuts'],  p['bwd_cuts'],  p['clues'],
+    'images/hundred_spiral_answer.png', solved=True,
+    aid_words=p['aid_words'], aid_clues=p['aid_clues'],
+)
+```
+
+---
+
 ## Files
 
 | File | Description |
 |------|-------------|
 | `back_and_forth.py` | Main generator, solver, and PNG renderer |
+| `puzzles_data.py` | Saved puzzle data (strings, cuts, clues, aid words) for finished puzzles |
 | `back_and_forth_inside_out.py` | Variant: inside-out construction strategy |
-| `images/` | Output PNGs |
+| `images/hundred_spiral.png` | 100-letter puzzle (tracked in git) |
+| `images/hundred_spiral_answer.png` | 100-letter answer key (tracked in git) |
+| `images/` | All other output PNGs are gitignored — regenerate from `puzzles_data.py` |
 
 ---
 

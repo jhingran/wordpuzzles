@@ -754,6 +754,118 @@ def _best_grid(N: int) -> tuple[int, int]:
     return best_r, best_c
 
 
+def find_aid_words(
+    s: str,
+    word_scores: dict[str, int],
+    fwd_words: list[str],
+    bwd_words: list[str],
+) -> list[tuple[str, int, int, str] | None]:
+    """
+    For each row in the spiral grid, find the best-scoring 3-letter word
+    (reading left→right or right→left) that is not in the puzzle chains.
+    Returns a list of (word, row, col_start, 'fwd'|'bwd') or None per row.
+    """
+    N = len(s)
+    rows, cols = _best_grid(N)
+    _, pos_to_idx = _make_spiral_map(rows, cols)
+    puzzle_words = set(fwd_words) | set(bwd_words)
+    results: list[tuple[str, int, int, str] | None] = []
+    for r in range(rows):
+        row_str = ''.join(s[pos_to_idx[(r, c)]] for c in range(cols))
+        best: tuple[str, int, int, str] | None = None
+        best_score = -1
+        for start in range(cols - 2):
+            sub = row_str[start:start + 3]
+            for word, dirn in [(sub, 'fwd'), (sub[::-1], 'bwd')]:
+                score = word_scores.get(word, 0)
+                if score > best_score and word not in puzzle_words:
+                    best_score = score
+                    best = (word, r, start, dirn)
+        results.append(best)
+    return results
+
+
+def find_specified_aid_words(
+    s: str,
+    words: list[str],
+) -> list[tuple[str, int, int, str]]:
+    """
+    Find each specified word reading left to right in the spiral grid.
+    Returns list of (word, row, col_start, 'fwd'), sorted by (row, col_start).
+    Raises ValueError if any word cannot be found.
+    """
+    N = len(s)
+    rows, cols = _best_grid(N)
+    _, pos_to_idx = _make_spiral_map(rows, cols)
+
+    results = []
+    for raw in words:
+        word = raw.strip().upper()
+        if not word:
+            continue
+        found = None
+        for r in range(rows):
+            row_str = ''.join(s[pos_to_idx[(r, c)]] for c in range(cols))
+            idx = row_str.find(word)
+            if idx != -1:
+                found = (word, r, idx, 'fwd')
+                break
+        if found is None:
+            raise ValueError(f'aid word {word!r} not found reading left to right in any grid row')
+        results.append(found)
+
+    results.sort(key=lambda x: (x[1], x[2]))
+    return results
+
+
+def _flow_clue_row(
+    draw_obj,
+    x0: int, max_x: int, y: int,
+    f_hdr, f_clue, row_h: int,
+    hdr_text: str, hdr_color: str,
+    clue_texts: list[str],
+    clue_color: str = '#444444',
+    sep_color: str  = '#AAAAAA',
+    do_draw: bool   = True,
+) -> int:
+    """
+    Render one flowing clue row (header + semicolon-separated clues, line-wrapped).
+    Returns the total height used.
+    """
+    def tw(text, font) -> int:
+        bb = draw_obj.textbbox((0, 0), text, font=font)
+        return bb[2] - bb[0]
+
+    x = x0
+    cur_y = y
+    indent = x0 + 22
+
+    if do_draw:
+        draw_obj.text((x, cur_y), hdr_text, fill=hdr_color, font=f_hdr)
+    x += tw(hdr_text, f_hdr) + 6
+
+    for i, clue_text in enumerate(clue_texts):
+        has_sep = i < len(clue_texts) - 1
+        sep = ';  ' if has_sep else ''
+        item_w = tw(clue_text, f_clue)
+
+        if x + item_w > max_x and x > indent:
+            cur_y += row_h
+            x = indent
+
+        if do_draw:
+            draw_obj.text((x, cur_y), clue_text, fill=clue_color, font=f_clue)
+        x += item_w
+
+        if has_sep:
+            sep_w = tw(sep, f_clue)
+            if do_draw:
+                draw_obj.text((x, cur_y), sep, fill=sep_color, font=f_clue)
+            x += sep_w
+
+    return cur_y + row_h - y
+
+
 def _load_font(size: int):
     from PIL import ImageFont
     for path in [
@@ -920,13 +1032,14 @@ def draw_puzzle_png_spiral(
     output_path: str,
     *,
     solved: bool = False,
+    aid_words: list | None = None,
+    aid_clues: list[str] | None = None,
 ) -> None:
     """
     Render the puzzle in a clockwise spiral grid layout.
 
-    Letters are placed in spiral order (top-left → right → down → left → up → …).
-    Word-cut positions are shown as coloured lines on shared cell edges:
-      blue  = forward cut,  red = backward cut.
+    aid_words: output of find_aid_words() — list of (word, row, col_start, dirn) or None
+    aid_clues: list of clue strings, one per row (aligned with aid_words)
     """
     try:
         from PIL import Image, ImageDraw
@@ -938,36 +1051,29 @@ def draw_puzzle_png_spiral(
     rows, cols = _best_grid(N)
     idx_to_pos, _ = _make_spiral_map(rows, cols)
 
-    n_fw = len(fwd_words)
-    n_bw = len(bwd_words)
-
     # ── Geometry ──
-    PAD_H     = 30
-    PAD_V     = 26
-    TITLE_H   = 44
-    SUB_H     = 22
-    GGAP      = 18
-    CLUE_GAP  = 34
-    HDR_H     = 28
-    DIV_H     = 8
-    ROW_H     = 22
+    PAD_H    = 30
+    PAD_V    = 26
+    TITLE_H  = 44
+    SUB_H    = 22
+    GGAP     = 18
+    CLUE_GAP = 28
+    ROW_H    = 22
+    SEC_GAP  = 10   # vertical gap between clue sections
 
-    # Scale cell so the longer grid dimension fits within ~580 px
-    CELL      = max(32, min(58, 580 // max(rows, cols)))
-    grid_w    = cols * CELL
-    grid_h    = rows * CELL
-    img_w     = max(900, grid_w + 2 * PAD_H)
-    gx0       = (img_w - grid_w) // 2
-    gy0       = PAD_V + TITLE_H + SUB_H + GGAP
-
-    n_clue_rows = max(n_fw, n_bw)
-    clue_h    = HDR_H + DIV_H + n_clue_rows * ROW_H + 10
-    img_h     = gy0 + grid_h + CLUE_GAP + clue_h + PAD_V
+    CELL   = max(32, min(58, 580 // max(rows, cols)))
+    grid_w = cols * CELL
+    grid_h = rows * CELL
+    img_w  = max(900, grid_w + 2 * PAD_H)
+    gx0    = (img_w - grid_w) // 2
+    THANKS_H = 18 if aid_words else 0
+    gy0    = PAD_V + TITLE_H + SUB_H + THANKS_H + GGAP
 
     # ── Colours ──
     BG          = '#F8F7F2'
     CELL_BG     = '#FFFFFF'
     CELL_FILLED = '#EEE8DE'
+    AID_BG      = '#D6EAF8'    # light blue for aid-word cells
     BORDER      = '#CCCCCC'
     LETTER_C    = '#1A1A2E'
     TITLE_C     = '#1A1A2E'
@@ -975,18 +1081,64 @@ def draw_puzzle_png_spiral(
     GROOVE_C    = '#1A1A2E'
     FWD_HDR_C   = '#1E4D8C'
     BWD_HDR_C   = '#8C3000'
-    CLUE_C      = '#555555'
-    DIVIDER_C   = '#CCCCCC'
+    AID_HDR_C   = '#2E7D32'
+    CLUE_C      = '#444444'
+    SEP_C       = '#AAAAAA'
+    DIVIDER_C   = '#DDDDDD'
     WATERMARK_C = '#AAAAAA'
 
-    img  = Image.new('RGB', (img_w, img_h), BG)
-    draw = ImageDraw.Draw(img)
-
+    # ── Fonts (loaded before image creation so we can pre-measure heights) ──
     f_title  = _load_font(26)
     f_sub    = _load_font(13)
     f_letter = _load_font(max(10, int(CELL * 0.45)))
-    f_hdr    = _load_font(15)
-    f_clue   = _load_font(13)
+    f_hdr    = _load_font(14)
+    f_clue   = _load_font(12)
+
+    # ── Aid-word cell set ──
+    aid_cells: set[tuple[int, int]] = set()
+    if aid_words:
+        for _, r, col_start, _ in aid_words:
+            for dc in range(3):
+                aid_cells.add((r, col_start + dc))
+
+    # Label for the aid section; show direction arrow(s)
+    if aid_words:
+        all_fwd = all(dirn == 'fwd' for _, _, _, dirn in aid_words)
+        _aid_hdr = 'Aid to solve (left to right):' if all_fwd else 'Aid to solve:'
+    else:
+        _aid_hdr = 'Aid to solve:'
+
+    # ── Clue section header strings ──
+    fwd_hdr = f'Clockwise (starting from 1):'
+    bwd_hdr = f'Anticlockwise (starting from {N}):'
+
+    # ── Pre-compute clue section height (dummy draw for text measurement) ──
+    from PIL import Image as _PILImage, ImageDraw as _PILDraw
+    _dummy = _PILImage.new('RGB', (img_w, 100))
+    _dd    = _PILDraw.Draw(_dummy)
+
+    fwd_clue_texts = [clues.get(w, '—') for w in fwd_words]
+    bwd_clue_texts = [clues.get(w, '—') for w in bwd_words]
+    aid_texts      = ([c if c else '—' for c in aid_clues] if aid_clues else [])
+
+    clue_h  = _flow_clue_row(_dd, PAD_H, img_w - PAD_H, 0, f_hdr, f_clue, ROW_H,
+                              fwd_hdr, FWD_HDR_C, fwd_clue_texts,
+                              CLUE_C, SEP_C, do_draw=False)
+    clue_h += SEC_GAP + 5   # divider line gap
+    clue_h += _flow_clue_row(_dd, PAD_H, img_w - PAD_H, 0, f_hdr, f_clue, ROW_H,
+                              bwd_hdr, BWD_HDR_C, bwd_clue_texts,
+                              CLUE_C, SEP_C, do_draw=False)
+    if aid_texts:
+        clue_h += SEC_GAP + 5
+        clue_h += _flow_clue_row(_dd, PAD_H, img_w - PAD_H, 0, f_hdr, f_clue, ROW_H,
+                                 _aid_hdr, AID_HDR_C, aid_texts,
+                                 CLUE_C, SEP_C, do_draw=False)
+    clue_h += 10  # bottom padding
+
+    img_h = gy0 + grid_h + CLUE_GAP + clue_h + PAD_V
+
+    img  = Image.new('RGB', (img_w, img_h), BG)
+    draw = ImageDraw.Draw(img)
 
     def tw(text: str, font) -> int:
         bb = draw.textbbox((0, 0), text, font=font)
@@ -999,16 +1151,27 @@ def draw_puzzle_png_spiral(
     y = PAD_V
     cx_text('BACK-AND-FORTH', f_title, img_w // 2, y, TITLE_C)
     y += TITLE_H
-    grid_label = f'{rows}×{cols}' if rows != cols else f'{rows}×{rows}'
-    cx_text(f'{N} letters  ·  {grid_label} grid  ·  {n_fw} forward  ·  {n_bw} backward',
+    cx_text('Anant Jhingran and Claude, inspired by Will Shortz\'s NY Times puzzles',
             f_sub, img_w // 2, y, SUB_C)
+    if aid_words:
+        f_thanks = _load_font(11)
+        y += SUB_H
+        cx_text('(special thanks to Manbir Khurana for helping improve the puzzle)',
+                f_thanks, img_w // 2, y, SUB_C)
 
     # ── Grid cells ──
+    f_num = _load_font(9)
+    NUM_C = '#555555'
     for idx in range(N):
         row, col = idx_to_pos[idx]
         cx = gx0 + col * CELL
         cy = gy0 + row * CELL
-        fill = CELL_FILLED if solved else CELL_BG
+        if (row, col) in aid_cells:
+            fill = AID_BG
+        elif solved:
+            fill = CELL_FILLED
+        else:
+            fill = CELL_BG
         draw.rectangle([cx, cy, cx + CELL - 1, cy + CELL - 1],
                        fill=fill, outline=BORDER, width=1)
         if solved:
@@ -1018,10 +1181,11 @@ def draw_puzzle_png_spiral(
             draw.text((cx + (CELL - lw) // 2 - bb[0],
                        cy + (CELL - lh) // 2 - bb[1]),
                       ch, fill=LETTER_C, font=f_letter)
+        if idx == 0 or idx == N - 1:
+            num = '1' if idx == 0 else str(N)
+            draw.text((cx + 2, cy + 2), num, fill=NUM_C, font=f_num)
 
     # ── Spiral groove ──
-    # Continuous dark line tracing the boundary between consecutive rings,
-    # spiralling inward. Works for any rows×cols rectangle.
     GROOVE_W   = 3
     num_layers = min(rows, cols) // 2
     for layer in range(num_layers):
@@ -1031,46 +1195,38 @@ def draw_puzzle_png_spiral(
         bx_left   = gx0 + (layer + 1) * CELL
         y_next    = gy0 + (layer + 2) * CELL
 
-        # Seg 1 – horizontal: inner boundary of this ring's top row
         draw.line([(gx0 + layer * CELL, by_top), (bx_right, by_top)],
                   fill=GROOVE_C, width=GROOVE_W)
-        # Seg 2 – vertical: inner boundary of this ring's right column
         if by_top < by_bottom:
             draw.line([(bx_right, by_top), (bx_right, by_bottom)],
                       fill=GROOVE_C, width=GROOVE_W)
-        # Seg 3 – horizontal: inner boundary of this ring's bottom row
         if by_top < by_bottom and bx_left < bx_right:
             draw.line([(bx_right, by_bottom), (bx_left, by_bottom)],
                       fill=GROOVE_C, width=GROOVE_W)
-        # Seg 4 – vertical: connects into the next inner ring.
-        # Skipped on the innermost layer (that edge borders the last spiral cell).
         if layer < num_layers - 1:
             draw.line([(bx_left, by_bottom), (bx_left, y_next)],
                       fill=GROOVE_C, width=GROOVE_W)
 
-    # ── Clue section ──
-    yc   = gy0 + grid_h + CLUE_GAP
-    mid  = img_w // 2
-    col1 = PAD_H
-    col2 = mid + 12
+    # ── Clue section (flowing horizontal rows) ──
+    yc = gy0 + grid_h + CLUE_GAP
 
-    draw.text((col1, yc), '→  FORWARD   (left to right)', fill=FWD_HDR_C, font=f_hdr)
-    draw.text((col2, yc), '←  BACKWARD  (right to left)', fill=BWD_HDR_C, font=f_hdr)
-    yc += HDR_H
-    draw.line([(col1, yc), (mid - 12, yc)], fill=DIVIDER_C, width=1)
-    draw.line([(col2, yc), (img_w - PAD_H, yc)], fill=DIVIDER_C, width=1)
-    yc += DIV_H
+    def _render_section(hdr_text: str, hdr_color: str, clue_texts: list[str]) -> None:
+        nonlocal yc
+        yc += _flow_clue_row(draw, PAD_H, img_w - PAD_H, yc, f_hdr, f_clue, ROW_H,
+                             hdr_text, hdr_color, clue_texts, CLUE_C, SEP_C, do_draw=True)
 
-    for i in range(n_clue_rows):
-        ry = yc + i * ROW_H
-        if i < n_fw:
-            w = fwd_words[i]; clue = clues.get(w, '—')
-            draw.text((col1,      ry), f'{i+1}.', fill=FWD_HDR_C, font=f_clue)
-            draw.text((col1 + 24, ry), clue,      fill=CLUE_C,    font=f_clue)
-        if i < n_bw:
-            w = bwd_words[i]; clue = clues.get(w, '—')
-            draw.text((col2,      ry), f'{i+1}.', fill=BWD_HDR_C, font=f_clue)
-            draw.text((col2 + 24, ry), clue,      fill=CLUE_C,    font=f_clue)
+    def _divider() -> None:
+        nonlocal yc
+        yc += SEC_GAP
+        draw.line([(PAD_H, yc), (img_w - PAD_H, yc)], fill=DIVIDER_C, width=1)
+        yc += 5
+
+    _render_section(fwd_hdr, FWD_HDR_C, fwd_clue_texts)
+    _divider()
+    _render_section(bwd_hdr, BWD_HDR_C, bwd_clue_texts)
+    if aid_texts:
+        _divider()
+        _render_section(_aid_hdr, AID_HDR_C, aid_texts)
 
     label = 'ANSWER' if solved else 'PUZZLE'
     draw.text((img_w - PAD_H - tw(label, f_sub), img_h - PAD_V // 2 - 10),
@@ -1121,6 +1277,10 @@ def main() -> None:
                     default=None,
                     help='Search strategy: random (default for short), extend (default for long), '
                          'or join (pool of short puzzles joined in pairs)')
+    ap.add_argument('--aid-to-solve',  action='store_true',
+                    help='Auto-find one 3-letter hidden word per row; shade and clue them')
+    ap.add_argument('--aid-words',     metavar='WORDS', default='',
+                    help='Semicolon-separated words to highlight as solving aids (read left to right)')
     args = ap.parse_args()
 
     print('Loading wordlist … ', end='', flush=True)
@@ -1235,10 +1395,40 @@ def main() -> None:
             else:
                 print('none (set ANTHROPIC_API_KEY to enable).')
 
-            draw_puzzle_png(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
-                            clues, puzzle_path, solved=False)
-            draw_puzzle_png(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
-                            clues, answer_path, solved=True)
+            # Aid-to-solve: specified words or auto-found, one per row
+            aid_words = None
+            aid_clues_list = None
+            if args.aid_words:
+                specified = [w.strip() for w in args.aid_words.split(';') if w.strip()]
+                try:
+                    aid_words = find_specified_aid_words(s, specified)
+                except ValueError as e:
+                    print(f'Warning: {e}', file=sys.stderr)
+                    aid_words = []
+            elif args.aid_to_solve:
+                raw = find_aid_words(s, word_scores, fwd_words, bwd_words)
+                aid_words = [item for item in raw if item is not None]
+
+            if aid_words:
+                print('Generating aid clues … ', end='', flush=True)
+                aid_clue_dict = generate_clues([w for w, *_ in aid_words], [])
+                aid_clues_list = [aid_clue_dict.get(w, '—') for w, *_ in aid_words]
+                print(f'{len(aid_clue_dict)} aid clues.')
+
+            N = len(s)
+            use_spiral = N > 30
+            if use_spiral:
+                draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                       clues, puzzle_path, solved=False,
+                                       aid_words=aid_words, aid_clues=aid_clues_list)
+                draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                       clues, answer_path, solved=True,
+                                       aid_words=aid_words, aid_clues=aid_clues_list)
+            else:
+                draw_puzzle_png(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                clues, puzzle_path, solved=False)
+                draw_puzzle_png(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                clues, answer_path, solved=True)
 
         found += 1
 
