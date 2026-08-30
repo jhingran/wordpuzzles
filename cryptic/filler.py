@@ -87,20 +87,20 @@ def _is_acronym(word: str) -> bool:
     return not any(c in _VOWELS for c in word) and word not in _ABBREV_OK
 
 
-def _is_trivial_s_plural(word: str, word_scores: dict[str, int]) -> bool:
+def _is_trivial_s_plural(word: str, word_set: "set[str] | dict") -> bool:
     """True if word is another word with S (or ES) simply appended.
 
-    Catches: TASKS→TASK, ROSES→ROSE, GASES→GAS, FOXES→FOX.
-    Passes:  LORRIES (LORRIE not a word), STORIES (STORIE not a word),
-             NECESSITIES (NECESSITIE not a word), SINUS (SINU not a word).
+    Catches: TASKS→TASK, ROSES→ROSE, GASES→GAS, FOXES→FOX,
+             SWIVETS→SWIVET, CENOBITES→CENOBITE (even if singular is low-score).
+    Passes:  LORRIES (LORRIE not a word), SINUS (SINU not a word).
     """
     if len(word) < 4:
         return False
-    # Simple +S: TASKS → TASK, ROSES → ROSE
-    if word.endswith("S") and word[:-1] in word_scores:
+    # Simple +S: TASKS → TASK, SWIVETS → SWIVET
+    if word.endswith("S") and word[:-1] in word_set:
         return True
     # +ES added to consonant-ending stem: GASES → GAS, FOXES → FOX
-    if len(word) >= 5 and word.endswith("ES") and word[:-2] in word_scores:
+    if len(word) >= 5 and word.endswith("ES") and word[:-2] in word_set:
         return True
     return False
 
@@ -112,7 +112,7 @@ def load_wordlist(
     max_len: int = 21,
     filter_acronyms: bool = True,
     penalize_s_plurals: bool = True,
-    s_plural_factor: float = 0.15,
+    s_plural_factor: float = 0.05,
 ) -> tuple[
     dict[str, int],           # word → quality score
     dict[tuple, frozenset],   # (length, pos, letter) → frozenset[word]
@@ -123,6 +123,7 @@ def load_wordlist(
         download_wordlist(path)
 
     word_scores: dict[str, int] = {}
+    all_stems: set[str] = set()   # every valid alpha word in the file, any score
     n_acronym = 0
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -137,6 +138,7 @@ def load_wordlist(
                 score = int(score_str.strip())
             except ValueError:
                 continue
+            all_stems.add(word)   # track before score/length filters
             if score < min_score or not (min_len <= len(word) <= max_len):
                 continue
             if filter_acronyms and _is_acronym(word):
@@ -146,13 +148,13 @@ def load_wordlist(
     if n_acronym:
         print(f"  (filtered {n_acronym:,} vowelless abbreviations)")
 
-    # Penalise trivial S-plurals (word = stem + S, stem also in wordlist).
-    # Reduce their score to s_plural_factor of original so the solver
-    # strongly prefers non-trivial alternatives but can still fall back.
+    # Penalise trivial S-plurals. Use all_stems (not just high-score words) so
+    # that rare singulars like SWIVET, CENOBITE, DUELLIST are found even when
+    # their score is below min_score.
     if penalize_s_plurals:
-        n_plural = sum(1 for w in word_scores if _is_trivial_s_plural(w, word_scores))
+        n_plural = sum(1 for w in word_scores if _is_trivial_s_plural(w, all_stems))
         for w in list(word_scores):
-            if _is_trivial_s_plural(w, word_scores):
+            if _is_trivial_s_plural(w, all_stems):
                 word_scores[w] = max(1, round(word_scores[w] * s_plural_factor))
         if n_plural:
             print(f"  (penalized {n_plural:,} trivial S-plurals to {s_plural_factor:.0%} score)")

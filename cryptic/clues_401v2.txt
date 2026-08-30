@@ -25,8 +25,8 @@
     # container [D2]: VI (six, Roman numeral) inside TRIAL (test=trial, synonym); "in" = indicator; "Easy" = def
     # self-check: T,R,I + VI + A,L = T,R,I,V,I,A,L = TRIVIAL ✓; 5+2=7 ✓
 
-13A (SOS, 3):  Distress call either way (3)
-    # palindrome [B4]: SOS reversed = SOS ✓; "either way" = indicator; "distress call" = def
+13A (COS, 3):  Reduced price lettuce (3)
+    # curtailment [A3]: "price" = COST; "reduced" = remove last letter; COST−T = COS; "lettuce" = def
 
 14A (SQUANDERERS, 11):  Short nerds and squares dancing away their fortune? (11)
     # semi-&lit [F6]: anagram [B1] of NERD (nerds short = tail deletion) + SQUARES; "dancing" = indicator + part of def
@@ -92,4 +92,39 @@
 7D  (SEASIDE, 7):  Main team's resort (7)
     # charade [D1]: MAIN = SEA (poetic/archaic "the main" = open sea) + SIDE = team; "resort" = def
     # self-check: SEA(3)+SIDE(4)=7; S,E,A,S,I,D,E = SEASIDE ✓; "resort" at end ✓; "Main" misdirects to "principal"
+
+8D  (DUELLISTS, 9):  Twin on air leans for fighters (9)
+    # homophone+charade [E1+D1]: DUAL (twin) sounds like DUEL ("on air" = homophone indicator) + LISTS (leans); "fighters" = def
+    # self-check: DUEL(4)+LISTS(5)=9 ✓; DUAL≈DUEL homophone ✓; "fighters" at end ✓; Anant's clue
+
+13A (COS, 3):  Reduced price lettuce (3)
+    # curtailment [A3]: "price" = COST; "reduced" = remove last letter; COST−T = COS; "lettuce" = def
+    # self-check: COST−T=COS ✓; "lettuce" at end ✓; Anant's clue
+
+13D (CENOBITES, 9):  Monks have hundred and one backbites (9)
+    # charade+reversal [D1]: "hundred"=C; "one back"=ENO (ONE reversed, "back" in "backbites" = reversal indicator); "bites"=BITES (from "backbites"); C+ENO+BITES=CENOBITES
+    # self-check: 1+3+5=9 ✓; "backbites" does double duty (surface=gossip, cryptic=back+bites) ✓; "Monks" at start ✓; Anant's clue
+
+19D (SEAGOER, 4,3):  Fortune teller harbours past of voyager (4,3)
+    # container [D2]: SEER (fortune teller) harbours AGO (past) = SE[AGO]ER = SEAGOER; "of voyager" = def; "harbours" = container indicator; Anant's clue
+    # self-check: S,E,[A,G,O],E,R = SEAGOER ✓; 4+3=7 ✓
+
+22D (KAYOS, 5):  Oaky seconds scrambled for knockouts (5)
+    # anagram [B1]: OAKY (4, wine descriptor) + S (1, seconds) = O,A,K,Y,S → KAYOS; "scrambled" = indicator; "knockouts" = def
+    # self-check: O,A,K,Y,S sorted = A,K,O,S,Y = KAYOS sorted ✓; 4+1=5 ✓
+
+24D (SOB, 3):  Curse makes one cry (3)
+    # double def [F1]: "curse" = SOB (expletive) ✓; "cry" = SOB (to sob) ✓; "makes one" = surface connector completing the sentence; Anant's clue
+    # self-check: both defs genuine and distinct ✓; no indicator needed ✓
+
+16D (CYANIDE, 7):  Blue-green fish poison (7)
+    # charade [D1]: CYAN (blue-green) + IDE (freshwater fish) = CYANIDE; "poison" = def
+    # self-check: CYAN(4)+IDE(3)=7 ✓; "poison" at end ✓; surface reads as poison from blue-green fish ✓
+
+17D (SWIVETS, 7):  Panics when wives get confused next to backstreet (7)
+    # anagram [B1]: WIVES(5) + TS(2, "back"=reversal of ST=street abbrev.) = W,I,V,E,S,T,S → SWIVETS; "get confused" = indicator; "Panics" = def; Anant's clue
+    # self-check: W,I,V,E,S,T,S sorted = E,I,S,S,T,V,W = SWIVETS sorted ✓; 5+2=7 ✓
+
+18D (SEALOFF, 4,3):  Hide or expose? (4,3)
+    # double def [F1]: "hide" = SEAL OFF (close/isolate) ✓; "expose" = SEAL + OFF (remove the seal) ✓; ? justified by paradox (same words = opposite meanings)
 

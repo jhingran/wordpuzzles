@@ -3,6 +3,8 @@
 !back_and_forth/images/hundred_spiral_answer.png
 !cryptic/images/filled_401v2.png
 !cryptic/images/filled_401v2_blank.png
+!cryptic/images/filled_401v2_complete.png
+!cryptic/images/filled_401v2_complete_blank.png
 __pycache__/
 *.pyc
 .DS_Store

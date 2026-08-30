@@ -28,14 +28,14 @@ PUZZLES: dict[str, dict] = {
             "T.A.S.E...M.S.L",   # row  4
             "SPIRITS.TRIVIAL",   # row  5
             "..N.N.T.E.T.D.I",   # row  6
-            "SOS.SQUANDERERS",   # row  7
-            "I.....D.N.....T",   # row  8
+            "COS.SQUANDERERS",   # row  7
+            "E.....D.N.....T",   # row  8
             "NECESSITIES.SIS",   # row  9
-            "K.Y.W.E.S.E.E..",   # row 10
+            "O.Y.W.E.S.E.E..",   # row 10
             "BEANIES.SEAHAWK",   # row 11
-            "A.N.V...H.L.G.A",   # row 12
+            "I.N.V...H.L.G.A",   # row 12
             "TRICEPS.OTOLOGY",   # row 13
-            "H.D.T.O.E.F.E.O",   # row 14
+            "E.D.T.O.E.F.E.O",   # row 14
             "STEMS.BUSHFIRES",   # row 15
         ],
         "clues": {
@@ -46,7 +46,7 @@ PUZZLES: dict[str, dict] = {
             "10A": "Caterer stumbles on the patio (7)",
             "11A": "Drunk, I strip somewhat early for shots (7)",
             "12A": "Easy six in a test (7)",
-            "13A": "Distress call either way (3)",
+            "13A": "Reduced price lettuce (3)",
             "14A": "Short nerds and squares dancing away their fortune? (11)",
             "15A": "Boston, Plymouth etc. welcome English ship as needed? (11)",
             "19A": "Spy sibling (3)",
@@ -64,15 +64,15 @@ PUZZLES: dict[str, dict] = {
             "5D":  "Take the chair? (3)",
             "6D":  "Pest destroys emitter (7)",
             "7D":  "Main team's resort (7)",
-            "8D":  "",   # DUELLISTS — WIP
-            "12D": "",   # TENNISSHOES — WIP
-            "13D": "",   # SINKBATHS — WIP
-            "16D": "",   # CYANIDE — WIP
-            "17D": "",   # SWIVETS — WIP
-            "18D": "",   # SEALOFF — WIP
-            "19D": "",   # SEAGOER — WIP
-            "22D": "",   # KAYOS — WIP
-            "24D": "",   # SOB — WIP
+            "8D":  "Twin on air leans for fighters (9)",
+            "12D": "Ashe's game pumps trainers (11)",
+            "13D": "Monks have hundred and one backbites (9)",
+            "16D": "Blue-green fish poison (7)",
+            "17D": "Panics when wives get confused next to backstreet (7)",
+            "18D": "Hide or expose? (4,3)",
+            "19D": "Fortune teller harbours past of voyager (4,3)",
+            "22D": "Oaky seconds scrambled for knockouts (5)",
+            "24D": "Curse makes one cry (3)",
         },
     },
 
