@@ -17,9 +17,9 @@
 10A (TERRACE, 7):  Caterer stumbles on the patio (7)
     # anagram [B1] of CATERER; "stumbles" = indicator; "on the patio" = def
 
-11A (SPIRITS, 7):  Drunk, I strip somewhat early for shots (7)
-    # anagram [B1]: I + STRIP + S(omewhat, first letter via "early") = I,S,T,R,I,P,S → SPIRITS; "shots" = def
-    # self-check: I(1)+STRIP(5)+S(1)=7; sorted I,I,P,R,S,S,T = SPIRITS sorted ✓; "drunk"=indicator; "early" for initial letter (non-standard but accepted)
+11A (SPIRITS, 7):  Drunk, I strip shirt first for shots (7)
+    # anagram [B1]: I + STRIP + S(hirt, "first" = initial-letter indicator) = I,S,T,R,I,P,S → SPIRITS; "drunk" = indicator; "shots" = def
+    # self-check: I(1)+STRIP(5)+S(1)=7; sorted I,I,P,R,S,S,T = SPIRITS sorted ✓; surface: drunk enough to strip shirt first ✓
 
 12A (TRIVIAL, 7):  Easy six in a test (7)
     # container [D2]: VI (six, Roman numeral) inside TRIAL (test=trial, synonym); "in" = indicator; "Easy" = def

@@ -44,7 +44,7 @@ PUZZLES: dict[str, dict] = {
             "6A":  "Stunned by rotten dates (5)",
             "9A":  "Tight spots between lands (7)",
             "10A": "Caterer stumbles on the patio (7)",
-            "11A": "Drunk, I strip somewhat early for shots (7)",
+            "11A": "Drunk, I strip shirt first for shots (7)",
             "12A": "Easy six in a test (7)",
             "13A": "Reduced price lettuce (3)",
             "14A": "Short nerds and squares dancing away their fortune? (11)",
