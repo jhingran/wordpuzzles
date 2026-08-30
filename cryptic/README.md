@@ -116,7 +116,7 @@ Fills a generated grid using CSP (Constraint Satisfaction Problem) backtracking.
 |--------|----------------|
 | Score threshold (`--min-score 50`) | Low-quality or obscure entries |
 | Acronym filter | Vowelless abbreviations (MCS, WRT, …) — a short allowlist keeps GPS, ESPN, JFK, etc. |
-| S-plural penalty | Words that are just another word + S or +ES scored at 15% — solver strongly prefers non-trivial alternatives |
+| S-plural penalty | Words that are just another word + S or +ES scored at 5% — solver strongly prefers non-trivial alternatives. Detection uses all words in the dict (including low-score singulars) so rare plurals like SWIVETS, CENOBITES are caught too. |
 
 ### Options
 
@@ -141,6 +141,8 @@ Fills a generated grid using CSP (Constraint Satisfaction Problem) backtracking.
 
 --png FILE             Save filled grid as PNG
 --cell-px N            Cell size in pixels (default: 64)
+--draft-clues FILE     Write an editable clue-draft text file after solving
+--render-clues FILE    Read an edited clue draft and render puzzle + solution PNGs (requires --png)
 ```
 
 ### Interactive mode
@@ -165,6 +167,36 @@ python3 filler.py -n 15 --seed 400 -e 12 --improve --noise 0.30 --png filled.png
 # Deterministic fill (no noise)
 python3 filler.py -n 15 --seed 400 -e 12 --improve --noise 0 --png filled.png
 ```
+
+### Clue workflow
+
+Once you have a fill you like, use `--draft-clues` to generate a clue draft, edit it, then render the final puzzle PNG:
+
+```bash
+# 1. Fill and write clue draft (Claude generates starter clues if ANTHROPIC_API_KEY is set)
+python3 filler.py -n 15 --seed 401 -e 12 --improve --draft-clues my_puzzle.txt
+
+# 2. Edit my_puzzle.txt — replace or refine the clue text for each entry
+
+# 3. Render final blank puzzle + solution PNGs
+python3 filler.py --render-clues my_puzzle.txt --png my_puzzle.png
+```
+
+---
+
+## Saved puzzles (`puzzles_data.py`)
+
+Completed puzzles are stored in `puzzles_data.py` as plain Python dicts — the grid, size, and all locked clues in one place. To re-render a puzzle's images:
+
+```bash
+python3 puzzles_data.py 15x15_sample
+```
+
+This produces:
+- `images/15x15_sample.png` — solution (answer key)
+- `images/15x15_sample_blank.png` — blank solver grid with clue panel
+
+The file is designed to be edited directly: add clues, fix wording, then re-render.
 
 ---
 
