@@ -1040,7 +1040,11 @@ def render_puzzle_png(
             label = f"{num}{slot.direction}"
             word  = assignment[slot]
             clue_text = clues.get(label, "")
-            entry = f"{num}. {clue_text}  ({len(word)})"
+            import re as _re
+            if _re.search(r'\(\d[\d,]*\)\s*$', clue_text):
+                entry = f"{num}. {clue_text}"
+            else:
+                entry = f"{num}. {clue_text}  ({len(word)})"
             # Wrap long lines
             max_chars = 42
             if len(entry) <= max_chars:
