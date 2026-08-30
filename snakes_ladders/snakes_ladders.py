@@ -1066,6 +1066,110 @@ def generate_clues(
     return clues
 
 
+# ── Two-step clue workflow ────────────────────────────────────────────────────
+
+import json as _json
+
+
+def write_clue_draft(
+    l1_words: list[str],
+    l2_words: list[str],
+    snakes: list[Snake],
+    output_path: str,
+    clues: dict[str, str] | None = None,
+) -> None:
+    """Write an editable clue-draft text file. Edit clues, then render with 'render' subcommand."""
+    clues = clues or {}
+
+    data = {
+        "l1_words": l1_words,
+        "l2_words": l2_words,
+        "snakes": [
+            {
+                "word": s.word,
+                "chunks": [
+                    {"source": c.source, "start": c.start,
+                     "length": c.length, "forward": c.forward}
+                    for c in s.chunks
+                ],
+            }
+            for s in snakes
+        ],
+    }
+
+    lines: list[str] = []
+    lines.append(f"## {_json.dumps(data, separators=(',', ':'))}")
+    lines.append("")
+    lines.append(f"# Snakes & Ladders puzzle")
+    lines.append(f"# Ladder 1:  {' · '.join(l1_words)}")
+    lines.append(f"# Ladder 2:  {' · '.join(l2_words)}")
+    lines.append(f"# Snakes:    {' · '.join(s.word for s in snakes)}")
+    lines.append("#")
+    lines.append("# Edit the clues below, then render with:")
+    lines.append(f"#   python snakes_ladders.py render {output_path} --png puzzle.png")
+    lines.append("")
+
+    lines.append("## Ladder 1 (top to bottom)")
+    for w in l1_words:
+        lines.append(f"{w}: {clues.get(w, '')}")
+    lines.append("")
+
+    lines.append("## Ladder 2 (top to bottom)")
+    for w in l2_words:
+        lines.append(f"{w}: {clues.get(w, '')}")
+    lines.append("")
+
+    lines.append("## Snakes")
+    for s in snakes:
+        lines.append(f"{s.word}: {clues.get(s.word, '')}")
+
+    Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  Clue draft written to {output_path}")
+    print(f"  Edit the clues, then run:")
+    print(f"    python snakes_ladders.py render {output_path} --png puzzle.png")
+
+
+def read_clue_file(path: str) -> tuple[list, list, list[Snake], dict[str, str]]:
+    """Parse a clue-draft file. Returns (l1_words, l2_words, snakes, clues)."""
+    text = Path(path).read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    data_raw = None
+    for line in lines:
+        if line.startswith("## ") and data_raw is None:
+            try:
+                data_raw = _json.loads(line[3:])
+                break
+            except _json.JSONDecodeError:
+                pass
+
+    if data_raw is None:
+        raise ValueError(f"No ## JSON header found in {path}")
+
+    l1_words = data_raw["l1_words"]
+    l2_words = data_raw["l2_words"]
+    snakes: list[Snake] = []
+    for sd in data_raw["snakes"]:
+        chunks = tuple(
+            Chunk(source=c["source"], start=c["start"],
+                  length=c["length"], forward=c["forward"])
+            for c in sd["chunks"]
+        )
+        snakes.append(Snake(chunks=chunks, word=sd["word"]))
+
+    clues: dict[str, str] = {}
+    for line in lines:
+        if line.startswith("#") or ":" not in line:
+            continue
+        w, defn = line.split(":", 1)
+        w = w.strip().upper()
+        defn = defn.strip()
+        if w:
+            clues[w] = defn
+
+    return l1_words, l2_words, snakes, clues
+
+
 # ── Verify ────────────────────────────────────────────────────────────────────
 
 def find_decompositions(
@@ -1284,6 +1388,8 @@ def main() -> None:
     chk.add_argument("--png", metavar="FILE", help="Save puzzle image to FILE")
     chk.add_argument("--interactive", action="store_true",
                      help="Edit clues interactively before writing the puzzle PNG")
+    chk.add_argument("--draft-clues", metavar="FILE", default=None,
+                     help="Write editable clue-draft text file instead of PNG")
 
     gen = sub.add_parser("generate", help="Search for a valid puzzle")
     gen.add_argument("--length", type=int, default=15)
@@ -1302,6 +1408,8 @@ def main() -> None:
                      help="Reject puzzles with more than this many 3-letter snakes (default: 2)")
     gen.add_argument("--interactive", action="store_true",
                      help="Edit clues interactively before writing the puzzle PNG")
+    gen.add_argument("--draft-clues", metavar="FILE", default=None,
+                     help="Write editable clue-draft text file instead of PNG")
     gen.add_argument(
         "--include", metavar="WORDS", default="",
         help=(
@@ -1318,7 +1426,26 @@ def main() -> None:
     ver.add_argument("--min-score", type=int, default=50)
     ver.add_argument("--time-limit", type=float, default=60.0)
 
+    ren = sub.add_parser("render", help="Render PNGs from an edited clue-draft file")
+    ren.add_argument("draft", metavar="FILE", help="Clue-draft text file")
+    ren.add_argument("--png", metavar="FILE", required=True,
+                     help="Output path (also writes stem_solution.png)")
+
     args = parser.parse_args()
+
+    # ── render: read draft, skip search ──────────────────────────────────────
+    if args.cmd == "render":
+        print(f"Reading clue draft from {args.draft} …")
+        l1w, l2w, snakes, clues = read_clue_file(args.draft)
+        display_puzzle(l1w, l2w, snakes)
+        p = Path(args.png)
+        solution_path = str(p.with_stem(p.stem + "_solution"))
+        puzzle_path   = str(p.with_stem(p.stem + "_puzzle"))
+        draw_puzzle_image(l1w, l2w, snakes, solution_path, solved=True)
+        draw_puzzle_image(l1w, l2w, snakes, puzzle_path, solved=False, clues=clues)
+        print(f"  Solution: {solution_path}")
+        print(f"  Puzzle:   {puzzle_path}")
+        return
 
     if not WORDLIST_PATH.exists():
         print(f"Error: wordlist not found at {WORDLIST_PATH}", file=sys.stderr)
@@ -1347,7 +1474,12 @@ def main() -> None:
                               args.time_limit, noncrossing=not args.crossing)
         if snakes:
             display_puzzle(l1w, l2w, snakes)
-            if args.png:
+            if args.draft_clues:
+                print("  Generating clues … ", end="", flush=True)
+                clues = generate_clues(l1w, l2w, snakes)
+                print("done" if clues else "no API key — clues left blank")
+                write_clue_draft(l1w, l2w, snakes, args.draft_clues, clues)
+            elif args.png:
                 _emit_pngs(l1w, l2w, snakes, args.png,
                            interactive=args.interactive)
         else:
@@ -1372,9 +1504,15 @@ def main() -> None:
             max_short_snakes=args.max_short_snakes,
         )
         if result:
-            display_puzzle(*result)
-            if args.png:
-                _emit_pngs(*result, args.png, include_words=include_words,
+            l1w, l2w, snakes = result
+            display_puzzle(l1w, l2w, snakes)
+            if args.draft_clues:
+                print("  Generating clues … ", end="", flush=True)
+                clues = generate_clues(l1w, l2w, snakes, overrides=include_words)
+                print("done" if clues else "no API key — clues left blank")
+                write_clue_draft(l1w, l2w, snakes, args.draft_clues, clues)
+            elif args.png:
+                _emit_pngs(l1w, l2w, snakes, args.png, include_words=include_words,
                            interactive=args.interactive)
         else:
             print("No valid puzzle found. Try a different --seed.")

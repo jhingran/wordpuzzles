@@ -607,6 +607,456 @@ def print_word_list(
     print()
 
 
+# ── Two-step clue workflow ────────────────────────────────────────────────
+
+import json as _json
+
+
+def _slot_label(slot: Slot, numbers: dict) -> str:
+    """Return e.g. '7A' or '12D'."""
+    return f"{numbers.get(slot.start, '?')}{slot.direction}"
+
+
+_CLUE_TYPES = [
+    "ANAGRAM",
+    "DOUBLE_DEF",
+    "HIDDEN",
+    "REVERSAL",
+    "CHARADE",
+    "CRYPTIC_DEF",
+]
+
+_CLUE_TYPE_GUIDE = """\
+CRYPTIC CLUE TYPE REFERENCE
+============================
+Every cryptic clue has two parts: a DEFINITION (straight meaning at one end) and WORDPLAY.
+
+ANAGRAM  —  letters of a word/phrase rearranged to give the answer.
+  Indicators: confused, mixed, broken, wild, out, scattered, upset, around, revised, etc.
+  Structure:  <definition> | <anagram indicator> <fodder>
+  Example:    PLAYERS → "Team from layers confused (7)" — "layers confused" = anagram of LAYERS... wait, PLAYERS.
+              LISTEN  → "Pay attention — it's enlist rearranged! (6)"
+
+DOUBLE_DEF  —  two separate, unconnected definitions of the same answer, side by side. No indicator.
+  Structure:  <def1> | <def2>
+  Example:    PITCHER → "Baseball thrower / large jug"
+              STALK   → "Plant stem / to follow obsessively"
+
+HIDDEN  —  the answer is concealed within consecutive letters of the clue.
+  Indicators: in, within, some, part of, hiding in, found in, inside.
+  Structure:  <definition> | <hidden indicator> <phrase containing answer>
+  Example:    ARCH   → "Cheeky, found in 'search carefully' (4)"
+              OAR    → "Paddle inboa race (3)"
+
+REVERSAL  —  a word or phrase reversed to give the answer.
+  Across indicators: back, returning, reflected, reversed.
+  Down indicators:   up, raised, climbing.
+  Structure:  <definition> | <reversal indicator> <word that reverses to answer>
+  Example:    LOOP  → "Circle — pool going back (4)"
+              STAR  → "Celestial body — rats reversed (4)"
+
+CHARADE  —  answer is built by placing shorter parts end-to-end (no overlap).
+  No specific indicator — just sequential placement.
+  Abbreviations commonly used: A=Ace/About, B=Bishop/Born, C=Century/Cold, D=Penny (old),
+  E=English, I=One, L=Learner/50, M=Married/1000, N=North/Knight, O=Love/Ring, P=Piano/Parking,
+  R=Right/Recipe, S=South/Saint, T=Time/Tenor, W=West/With.
+  Structure:  <definition> | <part1 clue> + <part2 clue> [+ ...]
+  Example:    CARPET → "Floor covering: car followed by pet (6)"
+              PLANET → "World: plan + E + T (6)"
+
+CRYPTIC_DEF  —  a single cleverly-worded or misleading definition. Usually ends with ?
+  Structure:  <witty or oblique single definition> ?
+  Example:    BANANA → "Fruit that might make you slip? (6)"
+              SPIDER → "Spin doctor? (6)"
+
+IMPORTANT RULES FOR ALL CLUE TYPES:
+- The definition must be at the START or END of the clue — never in the middle.
+- The wordplay must account for EVERY LETTER of the answer.
+- Never use the answer word (or a root of it) in the clue.
+- For HIDDEN: the hiding phrase must actually contain the answer's letters consecutively.
+- For REVERSAL: state the word that reverses to give the answer explicitly enough to be verified.
+- For ANAGRAM: the fodder letters must be an exact anagram of the answer.
+- Letter counts go at the end in parentheses: (5) or (4,3) for two-word answers.
+"""
+
+
+def _load_clue_context() -> str:
+    """Load clues_with_answers.txt and rules.md as few-shot context for generation."""
+    here = Path(__file__).resolve().parent
+    parts = []
+    for fname, header in [
+        ("clues_with_answers.txt", "EXAMPLE CLUES WITH MECHANISM ANNOTATIONS"),
+        ("rules.md",               "HOUSE STYLE RULES"),
+    ]:
+        p = here / fname
+        if p.exists():
+            parts.append(f"=== {header} ===\n{p.read_text(encoding='utf-8').strip()}")
+    return "\n\n".join(parts)
+
+
+def generate_clues_cryptic(
+    blocked: "set[Cell]",
+    n: int,
+    assignment: "dict[Slot, str]",
+    min_len: int = 3,
+    seed: int = 0,
+) -> "dict[str, str]":
+    """Generate proper cryptic clues keyed by slot label e.g. '1A', '7D'.
+    Randomly assigns a clue type to each word, then calls Claude Sonnet.
+    Returns {} if ANTHROPIC_API_KEY is unset or anthropic is not installed.
+    """
+    import os
+    import random as _random
+    from grid_gen import _number_cells
+    _load_dotenv_cryptic()
+
+    numbers = _number_cells(blocked, n, min_len)
+    rng = _random.Random(seed)
+
+    word_items = []
+    for s in sorted(assignment, key=lambda s: numbers.get(s.start, 0)):
+        if s.start not in numbers:
+            continue
+        label = f"{numbers[s.start]}{s.direction}"
+        word  = assignment[s]
+        ctype = rng.choice(_CLUE_TYPES)
+        word_items.append((label, word, ctype))
+
+    try:
+        import anthropic
+    except ImportError:
+        return {}
+    api_key = (os.environ.get("ANTHROPIC_API_KEY")
+               or os.environ.get("ANTHOROPIC_KEY")
+               or os.environ.get("ANTHROPIC_KEY"))
+    if not api_key:
+        return {}
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Build the per-word task list
+    task_lines = []
+    for label, word, ctype in word_items:
+        task_lines.append(f"{label} ({len(word)} letters, answer: {word}, preferred type: {ctype})")
+    task_block = "\n".join(task_lines)
+
+    clue_context = _load_clue_context()
+    preamble = clue_context if clue_context else _CLUE_TYPE_GUIDE
+
+    prompt = (
+        preamble
+        + "\n\nYOUR TASK\n=========\n"
+        "Write one British-style cryptic clue for each answer below. "
+        "Use the preferred clue type if you can make it work cleanly; "
+        "if not, choose the best alternative type and note it.\n\n"
+        "Format each response line EXACTLY as:\n"
+        "  LABEL [TYPE]: clue text (letter-count)\n"
+        "For example:\n"
+        "  7A [CHARADE]: Floor covering: car followed by pet (6)\n"
+        "  3D [ANAGRAM]: Confused listener hears nothing (6)\n\n"
+        "After each clue, add a brief annotation on the next line starting with '  #' explaining "
+        "the wordplay — for the setter's reference. Example:\n"
+        "  # LISTEN = anagram of ENLIST; 'confused' is the indicator; 'hears nothing' is def.\n\n"
+        f"Answers to clue:\n{task_block}"
+    )
+
+    clues: dict[str, str] = {}
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        label_set = {lbl for lbl, _, _ in word_items}
+        raw_lines = resp.content[0].text.strip().splitlines()
+        i = 0
+        while i < len(raw_lines):
+            line = raw_lines[i].strip()
+            # Match lines like "7A [CHARADE]: clue text (6)"
+            import re as _re
+            m = _re.match(r'^(\d+[AD])\s*\[([A-Z_]+)\]:\s*(.+)$', line, _re.IGNORECASE)
+            if m:
+                lbl = m.group(1).upper()
+                ctype_used = m.group(2).upper()
+                clue_text = m.group(3).strip()
+                # Grab annotation if next line starts with '#'
+                annotation = ""
+                if i + 1 < len(raw_lines) and raw_lines[i + 1].strip().startswith("#"):
+                    annotation = raw_lines[i + 1].strip()
+                    i += 1
+                if lbl in label_set:
+                    full = f"{clue_text}  {annotation}" if annotation else clue_text
+                    clues[lbl] = full
+            i += 1
+    except Exception as e:
+        print(f"Warning: clue generation failed: {e}", file=sys.stderr)
+    return clues
+
+
+def _load_dotenv_cryptic() -> None:
+    import os
+    here = Path(__file__).resolve().parent
+    for candidate in [here / ".env", here.parent / ".env"]:
+        if candidate.exists():
+            for line in candidate.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+            break
+
+
+def write_clue_draft_cryptic(
+    blocked: "set[Cell]",
+    n: int,
+    assignment: "dict[Slot, str]",
+    output_path: str,
+    clues: "dict[str, str]",
+    *,
+    cell_px: int = 64,
+    min_len: int = 3,
+) -> None:
+    """Write an editable clue-draft text file for a cryptic crossword fill."""
+    from grid_gen import _number_cells
+    numbers = _number_cells(blocked, n, min_len)
+
+    # Build serialisable slot list
+    slot_list = []
+    for slot, word in assignment.items():
+        if slot.start not in numbers:
+            continue
+        slot_list.append({
+            "num": numbers[slot.start],
+            "dir": slot.direction,
+            "word": word,
+            "cells": [list(cell) for cell in slot.cells],
+        })
+    slot_list.sort(key=lambda x: (x["num"], x["dir"]))
+
+    data = {
+        "n": n,
+        "cell_px": cell_px,
+        "min_len": min_len,
+        "blocked": [list(c) for c in sorted(blocked)],
+        "slots": slot_list,
+    }
+
+    across = [s for s in slot_list if s["dir"] == "A"]
+    down   = [s for s in slot_list if s["dir"] == "D"]
+
+    lines: list[str] = []
+    lines.append(f"## {_json.dumps(data, separators=(',', ':'))}")
+    lines.append("")
+    lines.append(f"# Cryptic crossword fill  ({n}×{n} grid)")
+    lines.append(f"# {len(across)} Across, {len(down)} Down")
+    lines.append("#")
+    lines.append("# Clues drafted by Claude Sonnet — each has a randomly-assigned type.")
+    lines.append("# The annotation line (starting with #) explains the wordplay.")
+    lines.append("# Edit the clue text; keep or delete the annotation as you like.")
+    lines.append("# Then render with:")
+    lines.append(f"#   python filler.py --render-clues {output_path} --png puzzle.png")
+    lines.append("")
+
+    lines.append("## ACROSS")
+    for s in across:
+        label = f"{s['num']}A"
+        raw = clues.get(label, "")
+        # Separate clue text from annotation (annotation starts with #)
+        parts = raw.split("  #", 1) if "  #" in raw else [raw, ""]
+        clue_text, annotation = parts[0].strip(), ("#" + parts[1]) if parts[1] else ""
+        lines.append(f"{label} ({s['word']}): {clue_text}")
+        if annotation:
+            lines.append(f"  {annotation}")
+    lines.append("")
+
+    lines.append("## DOWN")
+    for s in down:
+        label = f"{s['num']}D"
+        raw = clues.get(label, "")
+        parts = raw.split("  #", 1) if "  #" in raw else [raw, ""]
+        clue_text, annotation = parts[0].strip(), ("#" + parts[1]) if parts[1] else ""
+        lines.append(f"{label} ({s['word']}): {clue_text}")
+        if annotation:
+            lines.append(f"  {annotation}")
+
+    Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  Clue draft written to {output_path}")
+    print(f"  Edit clues, then run:")
+    print(f"    python filler.py --render-clues {output_path} --png puzzle.png")
+
+
+def read_clue_file_cryptic(path: str) -> "tuple[dict, dict[str, str]]":
+    """Parse a cryptic clue-draft file. Returns (puzzle_data, clues).
+    clues keys are like '1A', '7D'; puzzle_data has n, blocked, slots, cell_px, min_len.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    data_raw = None
+    for line in lines:
+        if line.startswith("## ") and data_raw is None:
+            try:
+                data_raw = _json.loads(line[3:])
+                break
+            except _json.JSONDecodeError:
+                pass
+
+    if data_raw is None:
+        raise ValueError(f"No ## JSON header found in {path}")
+
+    puzzle_data = {
+        "n":        data_raw["n"],
+        "cell_px":  data_raw.get("cell_px", 64),
+        "min_len":  data_raw.get("min_len", 3),
+        "blocked":  {tuple(c) for c in data_raw["blocked"]},
+        "slots":    data_raw["slots"],
+    }
+
+    clues: dict[str, str] = {}
+    for line in lines:
+        if line.startswith("#") or ":" not in line:
+            continue
+        # Lines look like "1A (WORD): clue text"
+        # Strip the (WORD) annotation before splitting on ':'
+        import re as _re
+        clean = _re.sub(r"\s*\([^)]*\)", "", line)
+        if ":" not in clean:
+            continue
+        lbl, defn = clean.split(":", 1)
+        lbl = lbl.strip().upper()
+        defn = defn.strip()
+        if lbl and defn:
+            clues[lbl] = defn
+
+    return puzzle_data, clues
+
+
+def render_puzzle_png(
+    blocked: "set[Cell]",
+    n: int,
+    assignment: "dict[Slot, str]",
+    path: str,
+    clues: "dict[str, str]",
+    cell_px: int = 64,
+    min_len: int = 3,
+) -> None:
+    """Render a blank (puzzle) PNG: empty white cells with clue numbers + right-side clue panel."""
+    from PIL import Image, ImageDraw, ImageFont
+    from grid_gen import _number_cells
+
+    BLACK      = (30, 30, 30)
+    WHITE      = (255, 255, 255)
+    GRID_LINE  = (180, 180, 180)
+    NUM_COLOR  = (80, 80, 80)
+    INK        = (20, 20, 20)
+    PANEL_BG   = (245, 245, 245)
+
+    outer = 3
+    inner = 1
+    grid_px = outer * 2 + n * cell_px + (n - 1) * inner
+
+    PANEL_GAP  = 20
+    PANEL_W    = 340
+    CLUE_PAD   = 10
+    HDR_H      = 26
+    LINE_H     = 18
+
+    numbers = _number_cells(blocked, n, min_len)
+    num_to_cell = {v: k for k, v in numbers.items()}
+
+    def slot_num(slot: Slot) -> int:
+        return numbers.get(slot.start, 0)
+
+    across = sorted([s for s in assignment if s.direction == "A"], key=slot_num)
+    down   = sorted([s for s in assignment if s.direction == "D"], key=slot_num)
+
+    # Estimate panel height
+    n_lines = 2 + len(across) + 2 + len(down)
+    panel_h = HDR_H + n_lines * LINE_H + CLUE_PAD * 2
+
+    img_h  = max(grid_px, panel_h) + CLUE_PAD * 2
+    img_w  = grid_px + PANEL_GAP + PANEL_W
+
+    img  = Image.new("RGB", (img_w, img_h), WHITE)
+    draw = ImageDraw.Draw(img)
+
+    # Grid outer border
+    draw.rectangle([0, 0, grid_px - 1, grid_px - 1], fill=BLACK)
+    draw.rectangle([outer, outer, grid_px - outer - 1, grid_px - outer - 1], fill=WHITE)
+
+    def cell_rect(r: int, c: int):
+        x0 = outer + (c - 1) * (cell_px + inner)
+        y0 = outer + (r - 1) * (cell_px + inner)
+        return x0, y0, x0 + cell_px - 1, y0 + cell_px - 1
+
+    # Fonts
+    num_font = clue_font = hdr_font = None
+    for candidate in [
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ]:
+        if Path(candidate).exists():
+            try:
+                num_font  = ImageFont.truetype(candidate, size=max(9, cell_px // 6))
+                clue_font = ImageFont.truetype(candidate, size=13)
+                hdr_font  = ImageFont.truetype(candidate, size=14)
+                break
+            except Exception:
+                pass
+    if num_font is None:
+        num_font = clue_font = hdr_font = ImageFont.load_default()
+
+    # Draw cells
+    for r in range(1, n + 1):
+        for c in range(1, n + 1):
+            x0, y0, x1, y1 = cell_rect(r, c)
+            if (r, c) in blocked:
+                draw.rectangle([x0, y0, x1, y1], fill=BLACK)
+            else:
+                # Grid lines
+                if c < n and (r, c + 1) not in blocked:
+                    draw.line([(x1 + 1, y0), (x1 + 1, y1)], fill=GRID_LINE, width=inner)
+                if r < n and (r + 1, c) not in blocked:
+                    draw.line([(x0, y1 + 1), (x1, y1 + 1)], fill=GRID_LINE, width=inner)
+                # Clue number
+                if (r, c) in numbers:
+                    draw.text((x0 + 2, y0 + 1), str(numbers[(r, c)]),
+                              fill=NUM_COLOR, font=num_font)
+
+    # Clue panel background
+    px0 = grid_px + PANEL_GAP
+    draw.rectangle([px0, 0, img_w - 1, img_h - 1], fill=PANEL_BG)
+
+    py = CLUE_PAD
+    for section_label, slots in [("ACROSS", across), ("DOWN", down)]:
+        draw.text((px0 + CLUE_PAD, py), section_label, fill=INK, font=hdr_font)
+        py += HDR_H
+        for slot in slots:
+            num = slot_num(slot)
+            label = f"{num}{slot.direction}"
+            word  = assignment[slot]
+            clue_text = clues.get(label, "")
+            entry = f"{num}. {clue_text}  ({len(word)})"
+            # Wrap long lines
+            max_chars = 42
+            if len(entry) <= max_chars:
+                draw.text((px0 + CLUE_PAD, py), entry, fill=INK, font=clue_font)
+                py += LINE_H
+            else:
+                parts = entry[:max_chars].rsplit(" ", 1)
+                draw.text((px0 + CLUE_PAD, py), parts[0], fill=INK, font=clue_font)
+                py += LINE_H
+                rest = (parts[1] + entry[max_chars:]).strip() if len(parts) > 1 else entry[max_chars:]
+                draw.text((px0 + CLUE_PAD + 14, py), rest, fill=INK, font=clue_font)
+                py += LINE_H
+        py += CLUE_PAD
+
+    img.save(path)
+    print(f"  Puzzle PNG saved → {path}")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -640,9 +1090,44 @@ def main() -> None:
     parser.add_argument("--interactive", action="store_true",
                         help="After solving, enter a feedback loop to ban words and re-solve")
     # Output
-    parser.add_argument("--png",     metavar="FILE", default=None)
-    parser.add_argument("--cell-px", type=int, default=64)
+    parser.add_argument("--png",          metavar="FILE", default=None)
+    parser.add_argument("--cell-px",      type=int, default=64)
+    parser.add_argument("--draft-clues",  metavar="FILE", default=None,
+                        help="Write editable clue-draft text file (no PNG)")
+    parser.add_argument("--render-clues", metavar="FILE", default=None,
+                        help="Read edited clue draft and render puzzle + solution PNGs (requires --png)")
     args = parser.parse_args()
+
+    # ── render-clues: read draft, skip grid generation ─────────────────────
+    if args.render_clues:
+        if not args.png:
+            print("Error: --render-clues requires --png output.png", file=sys.stderr)
+            sys.exit(1)
+        print(f"Reading clue draft from {args.render_clues} …")
+        puzzle_data, clues = read_clue_file_cryptic(args.render_clues)
+        n_r       = puzzle_data["n"]
+        blocked_r = puzzle_data["blocked"]
+        cell_px_r = puzzle_data["cell_px"]
+        min_len_r = puzzle_data["min_len"]
+        slots_r   = puzzle_data["slots"]
+
+        # Reconstruct Slot/assignment from stored data
+        assignment_r: dict[Slot, str] = {}
+        for sd in slots_r:
+            slot = Slot(
+                direction=sd["dir"],
+                start=tuple(sd["cells"][0]),
+                cells=tuple(tuple(c) for c in sd["cells"]),
+            )
+            assignment_r[slot] = sd["word"]
+
+        p = Path(args.png)
+        solution_path = str(p.with_stem(p.stem + "_solution"))
+        render_filled_png(blocked_r, n_r, assignment_r, solution_path, cell_px_r, min_len_r)
+        render_puzzle_png(blocked_r, n_r, assignment_r, str(p), clues, cell_px_r, min_len_r)
+        print(f"  Puzzle:   {args.png}")
+        print(f"  Solution: {solution_path}")
+        return
 
     # Word list
     if args.download:
@@ -683,6 +1168,13 @@ def main() -> None:
 
     print("\n" + render_filled_ascii(blocked, args.size, assignment))
     print_word_list(blocked, args.size, assignment, word_scores, args.min_word)
+
+    if args.draft_clues:
+        print("  Generating clue starters … ", end="", flush=True)
+        clues = generate_clues_cryptic(blocked, args.size, assignment, args.min_word)
+        print(f"{len(clues)} clues." if clues else "no API key — clues left blank.")
+        write_clue_draft_cryptic(blocked, args.size, assignment, args.draft_clues,
+                                 clues, cell_px=args.cell_px, min_len=args.min_word)
 
     if args.png:
         render_filled_png(

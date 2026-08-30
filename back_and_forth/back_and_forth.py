@@ -480,13 +480,15 @@ def generate(
 
         # Build forward word list, inserting any pinned-forward words
         if pin_fwd:
-            pin = rng.choice(pin_fwd)
-            rest_count = max(1, n - 1)
+            # Insert ALL pinned words; shuffle their positions randomly
+            pins = list(pin_fwd)
+            rest_count = max(0, n - len(pins))
             if len(fwd_candidates) < rest_count:
                 continue
-            rest = rng.sample(fwd_candidates, rest_count)
-            insert_at = rng.randint(0, len(rest))
-            fwd_words = rest[:insert_at] + [pin] + rest[insert_at:]
+            rest = rng.sample(fwd_candidates, rest_count) if rest_count else []
+            combined = rest + pins
+            rng.shuffle(combined)
+            fwd_words = combined
         else:
             if len(fwd_candidates) < n:
                 continue
@@ -714,6 +716,146 @@ def generate_clues(
             pass
 
     return clues
+
+
+# ── Two-step clue workflow ────────────────────────────────────────────────────
+
+import json as _json
+
+
+def write_clue_draft(
+    fwd_words: list[str],
+    bwd_words: list[str],
+    s: str,
+    fwd_cuts: set[int],
+    bwd_cuts: set[int],
+    clues: dict[str, str],
+    output_path: str,
+    *,
+    aid_words: list | None = None,
+    aid_clues: list[str] | None = None,
+) -> None:
+    """Write an editable clue-draft text file.
+
+    The first line is a machine-readable JSON record (prefixed with '##').
+    The rest of the file contains human-readable context and one WORD: clue
+    line per word.  Edit the clue text, then render with --render-clues.
+    """
+    N = len(s)
+
+    # Build machine-readable header
+    data: dict = {
+        's': s,
+        'fwd_words': fwd_words,
+        'bwd_words': bwd_words,
+        'fwd_cuts': sorted(fwd_cuts),
+        'bwd_cuts': sorted(bwd_cuts),
+        'aid_words': [list(t) for t in aid_words] if aid_words else None,
+    }
+
+    # Build a compact ASCII answer grid (two rows: forward / backward with cuts)
+    fwd_row: list[str] = []
+    bwd_row: list[str] = []
+    for i, ch in enumerate(s):
+        fwd_row.append(ch)
+        bwd_row.append(ch)
+        if i < N - 1:
+            pos = i + 1
+            fwd_row.append('|' if pos in fwd_cuts else ' ')
+            bwd_row.append('|' if pos in bwd_cuts else ' ')
+    fwd_line = '  Clockwise:      ' + ''.join(fwd_row)
+    bwd_line = '  Anticlockwise:  ' + ''.join(bwd_row)
+
+    lines: list[str] = []
+    lines.append(f'## {_json.dumps(data, separators=(",", ":"))}')
+    lines.append('')
+    lines.append(f'# Back-and-Forth puzzle  ({N} letters)')
+    lines.append(f'# Forward:   {" · ".join(fwd_words)}')
+    lines.append(f'# Backward:  {" · ".join(bwd_words)}  (right-to-left)')
+    lines.append('#')
+    lines.append('# Answer grid:')
+    lines.append(f'# {fwd_line}')
+    lines.append(f'# {bwd_line}')
+    lines.append('#')
+    lines.append('# Edit the clues below, then render with:')
+    lines.append(f'#   python back_and_forth.py --render-clues {output_path} --png puzzle.png')
+    lines.append('')
+
+    lines.append('## Clockwise (forward chain, left to right)')
+    for w in fwd_words:
+        lines.append(f'{w}: {clues.get(w, "")}')
+    lines.append('')
+
+    lines.append('## Anticlockwise (backward chain, right to left)')
+    for w in bwd_words:
+        lines.append(f'{w}: {clues.get(w, "")}')
+
+    if aid_words:
+        lines.append('')
+        lines.append('## Aid to solve')
+        for i, (w, *_) in enumerate(aid_words):
+            ac = (aid_clues[i] if aid_clues and i < len(aid_clues) else '')
+            lines.append(f'{w}: {clues.get(w, ac)}')
+
+    Path(output_path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    print(f'Clue draft written to {output_path}')
+
+
+def read_clue_file(path: str) -> tuple[dict, dict[str, str], list[str]]:
+    """Parse a clue-draft file.
+
+    Returns (puzzle_data, clues, aid_clues_list).
+    puzzle_data has keys: s, fwd_words, bwd_words, fwd_cuts (set), bwd_cuts (set),
+    aid_words (list of tuples or None).
+    aid_clues_list is in the same order as puzzle_data['aid_words'].
+    """
+    text = Path(path).read_text(encoding='utf-8')
+    lines = text.splitlines()
+
+    # First non-empty line must be the ## JSON record
+    data_raw: dict | None = None
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('## ') and not data_raw:
+            try:
+                data_raw = _json.loads(stripped[3:])
+                break
+            except _json.JSONDecodeError:
+                pass
+
+    if data_raw is None:
+        raise ValueError(f'No ## JSON header found in {path}')
+
+    puzzle_data: dict = {
+        's':         data_raw['s'],
+        'fwd_words': data_raw['fwd_words'],
+        'bwd_words': data_raw['bwd_words'],
+        'fwd_cuts':  set(data_raw['fwd_cuts']),
+        'bwd_cuts':  set(data_raw['bwd_cuts']),
+        'aid_words': [tuple(t) for t in data_raw['aid_words']] if data_raw.get('aid_words') else None,
+    }
+
+    # Collect all WORD: clue lines (skip # comments and ## section headers)
+    clues: dict[str, str] = {}
+    for line in lines:
+        if line.startswith('#'):
+            continue
+        if ':' not in line:
+            continue
+        w, defn = line.split(':', 1)
+        w = w.strip().upper()
+        defn = defn.strip()
+        if w:
+            clues[w] = defn
+
+    # Build aid_clues aligned with aid_words
+    aid_words = puzzle_data['aid_words']
+    aid_clues_list: list[str] = []
+    if aid_words:
+        for w, *_ in aid_words:
+            aid_clues_list.append(clues.get(w.upper(), '—'))
+
+    return puzzle_data, clues, aid_clues_list
 
 
 # ── PNG helpers ────────────────────────────────────────────────────────────────
@@ -1034,6 +1176,10 @@ def draw_puzzle_png_spiral(
     solved: bool = False,
     aid_words: list | None = None,
     aid_clues: list[str] | None = None,
+    title: str | None = None,
+    thanks: str | None = None,
+    credit: str | None = "Anant Jhingran and Claude, inspired by Will Shortz's NY Times puzzles",
+    circle_words: list[str] | None = None,
 ) -> None:
     """
     Render the puzzle in a clockwise spiral grid layout.
@@ -1066,8 +1212,10 @@ def draw_puzzle_png_spiral(
     grid_h = rows * CELL
     img_w  = max(900, grid_w + 2 * PAD_H)
     gx0    = (img_w - grid_w) // 2
-    THANKS_H = 18 if aid_words else 0
-    gy0    = PAD_V + TITLE_H + SUB_H + THANKS_H + GGAP
+    CREDIT_H = SUB_H if credit else 0
+    THANKS_H = 18 if (aid_words or thanks) else 0
+    TITLE_EXTRA_H = SUB_H if title else 0
+    gy0    = PAD_V + TITLE_H + CREDIT_H + TITLE_EXTRA_H + THANKS_H + GGAP
 
     # ── Colours ──
     BG          = '#F8F7F2'
@@ -1101,10 +1249,34 @@ def draw_puzzle_png_spiral(
             for dc in range(3):
                 aid_cells.add((r, col_start + dc))
 
-    # Label for the aid section; show direction arrow(s)
+    # Build circle_cells: grid positions of letters belonging to circle_words
+    circle_cells: set[tuple[int, int]] = set()
+    if circle_words:
+        circle_set = set(w.upper() for w in circle_words)
+        # forward words: sequential left-to-right in s
+        fwd_pos = 0
+        for word in fwd_words:
+            if word in circle_set:
+                for i in range(len(word)):
+                    circle_cells.add(idx_to_pos[fwd_pos + i])
+            fwd_pos += len(word)
+        # backward words: right-to-left in s; bwd_cuts mark positions reading forward
+        bwd_pos = N
+        for word in bwd_words:
+            bwd_pos -= len(word)
+            if word in circle_set:
+                for i in range(len(word)):
+                    circle_cells.add(idx_to_pos[bwd_pos + i])
+
+    # Label for the aid section
     if aid_words:
-        all_fwd = all(dirn == 'fwd' for _, _, _, dirn in aid_words)
-        _aid_hdr = 'Aid to solve (left to right):' if all_fwd else 'Aid to solve:'
+        n_aid = len(aid_words)
+        distinct_rows = len(set(r for _, r, _, _ in aid_words))
+        per_row = n_aid // distinct_rows if distinct_rows else 1
+        _aid_hdr = (
+            f'Aid to solve: fill the shaded cells with {n_aid} three-letter words, '
+            f'reading left to right, {per_row} per row.'
+        )
     else:
         _aid_hdr = 'Aid to solve:'
 
@@ -1151,13 +1323,16 @@ def draw_puzzle_png_spiral(
     y = PAD_V
     cx_text('BACK-AND-FORTH', f_title, img_w // 2, y, TITLE_C)
     y += TITLE_H
-    cx_text('Anant Jhingran and Claude, inspired by Will Shortz\'s NY Times puzzles',
-            f_sub, img_w // 2, y, SUB_C)
-    if aid_words:
-        f_thanks = _load_font(11)
+    if title:
+        cx_text(title, f_sub, img_w // 2, y, TITLE_C)
         y += SUB_H
-        cx_text('(special thanks to Manbir Khurana for helping improve the puzzle)',
-                f_thanks, img_w // 2, y, SUB_C)
+    if credit:
+        cx_text(credit, f_sub, img_w // 2, y, SUB_C)
+        y += SUB_H
+    thanks_text = thanks or ('(special thanks to Manbir Khurana for helping improve the puzzle)' if aid_words else None)
+    if thanks_text:
+        f_thanks = _load_font(11)
+        cx_text(thanks_text, f_thanks, img_w // 2, y, SUB_C)
 
     # ── Grid cells ──
     f_num = _load_font(9)
@@ -1184,6 +1359,10 @@ def draw_puzzle_png_spiral(
         if idx == 0 or idx == N - 1:
             num = '1' if idx == 0 else str(N)
             draw.text((cx + 2, cy + 2), num, fill=NUM_C, font=f_num)
+        if (row, col) in circle_cells:
+            pad = max(2, CELL // 8)
+            draw.ellipse([cx + pad, cy + pad, cx + CELL - 1 - pad, cy + CELL - 1 - pad],
+                         outline='#1A1A2E', width=2)
 
     # ── Spiral groove ──
     GROOVE_W   = 3
@@ -1281,7 +1460,105 @@ def main() -> None:
                     help='Auto-find one 3-letter hidden word per row; shade and clue them')
     ap.add_argument('--aid-words',     metavar='WORDS', default='',
                     help='Semicolon-separated words to highlight as solving aids (read left to right)')
+    ap.add_argument('--draft-clues',   metavar='FILE', default=None,
+                    help='Generate puzzle, get AI clues, write editable draft text file (no PNG)')
+    ap.add_argument('--render-clues',  metavar='FILE', default=None,
+                    help='Read an edited clue draft and render puzzle + answer PNGs (requires --png)')
+    ap.add_argument('--render-personal', metavar='KEY', default=None,
+                    help='Render a puzzle from puzzles_personal.py by key (requires --png)')
     args = ap.parse_args()
+
+    # ── render-personal: render from puzzles_personal.py ─────────────────────
+    if args.render_personal:
+        if not args.png:
+            print('Error: --render-personal requires --png output.png', file=sys.stderr)
+            sys.exit(1)
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location('puzzles_personal',
+                    Path(__file__).parent / 'puzzles_personal.py')
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        key = args.render_personal
+        p_data = _mod.PUZZLES_PERSONAL.get(key)
+        if p_data is None:
+            print(f'Error: key {key!r} not found in puzzles_personal.py', file=sys.stderr)
+            sys.exit(1)
+        fwd_words   = p_data['fwd_words']
+        bwd_words   = p_data['bwd_words']
+        s           = p_data['s']
+        fwd_cuts    = p_data['fwd_cuts']
+        bwd_cuts    = p_data['bwd_cuts']
+        clues       = p_data['clues']
+        aid_words_r = p_data.get('aid_words')
+        aid_clues_r = p_data.get('aid_clues')
+        puzzle_title = p_data.get('title')
+        puzzle_thanks = p_data.get('thanks')
+        puzzle_credit = p_data.get('credit', None)
+        puzzle_circles = p_data.get('circle_words')
+        display(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts)
+        p = Path(args.png)
+        puzzle_path = str(p)
+        answer_path = str(p.parent / f'{p.stem}_answer{p.suffix or ".png"}')
+        N = len(s)
+        if N > 30:
+            draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                   clues, puzzle_path, solved=False,
+                                   aid_words=aid_words_r, aid_clues=aid_clues_r,
+                                   title=puzzle_title, thanks=puzzle_thanks, credit=puzzle_credit,
+                                   circle_words=puzzle_circles)
+            draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                   clues, answer_path, solved=True,
+                                   aid_words=aid_words_r, aid_clues=aid_clues_r,
+                                   title=puzzle_title, thanks=puzzle_thanks, credit=puzzle_credit,
+                                   circle_words=puzzle_circles)
+        else:
+            draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                   clues, puzzle_path, solved=False,
+                                   title=puzzle_title, thanks=puzzle_thanks, credit=puzzle_credit,
+                                   circle_words=puzzle_circles)
+            draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                   clues, answer_path, solved=True,
+                                   title=puzzle_title, thanks=puzzle_thanks, credit=puzzle_credit,
+                                   circle_words=puzzle_circles)
+        print(f'Puzzle: {puzzle_path}')
+        print(f'Answer: {answer_path}')
+        return
+
+    # ── render-clues: read existing draft file, skip search entirely ──────────
+    if args.render_clues:
+        if not args.png:
+            print('Error: --render-clues requires --png output.png', file=sys.stderr)
+            sys.exit(1)
+        print(f'Reading clue draft from {args.render_clues} …')
+        puzzle_data, clues, aid_clues_list = read_clue_file(args.render_clues)
+        fwd_words   = puzzle_data['fwd_words']
+        bwd_words   = puzzle_data['bwd_words']
+        s           = puzzle_data['s']
+        fwd_cuts    = puzzle_data['fwd_cuts']
+        bwd_cuts    = puzzle_data['bwd_cuts']
+        aid_words_r = puzzle_data['aid_words']
+
+        display(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts)
+
+        p = Path(args.png)
+        puzzle_path = str(p)
+        answer_path = str(p.parent / f'{p.stem}_answer{p.suffix or ".png"}')
+        N = len(s)
+        if N > 30:
+            draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                   clues, puzzle_path, solved=False,
+                                   aid_words=aid_words_r, aid_clues=aid_clues_list or None)
+            draw_puzzle_png_spiral(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                                   clues, answer_path, solved=True,
+                                   aid_words=aid_words_r, aid_clues=aid_clues_list or None)
+        else:
+            draw_puzzle_png(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                            clues, puzzle_path, solved=False)
+            draw_puzzle_png(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                            clues, answer_path, solved=True)
+        print(f'Puzzle: {puzzle_path}')
+        print(f'Answer: {answer_path}')
+        return
 
     print('Loading wordlist … ', end='', flush=True)
     min_score_load = min(args.min_score, args.min_score_bwd)
@@ -1380,14 +1657,7 @@ def main() -> None:
 
         display(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts)
 
-        if args.png:
-            p = Path(args.png)
-            # When count > 1, number each output file
-            stem   = f'{p.stem}_{found}' if args.count > 1 else p.stem
-            suffix = p.suffix or '.png'
-            puzzle_path = str(p.parent / f'{stem}{suffix}')
-            answer_path = str(p.parent / f'{stem}_answer{suffix}')
-
+        if args.draft_clues or args.png:
             print('Generating clues … ', end='', flush=True)
             clues = generate_clues(fwd_words, bwd_words)
             if clues:
@@ -1414,6 +1684,23 @@ def main() -> None:
                 aid_clue_dict = generate_clues([w for w, *_ in aid_words], [])
                 aid_clues_list = [aid_clue_dict.get(w, '—') for w, *_ in aid_words]
                 print(f'{len(aid_clue_dict)} aid clues.')
+
+        if args.draft_clues:
+            draft_path = args.draft_clues
+            if args.count > 1:
+                p = Path(draft_path)
+                draft_path = str(p.parent / f'{p.stem}_{found}{p.suffix}')
+            write_clue_draft(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts,
+                             clues, draft_path,
+                             aid_words=aid_words, aid_clues=aid_clues_list)
+
+        if args.png:
+            p = Path(args.png)
+            # When count > 1, number each output file
+            stem   = f'{p.stem}_{found}' if args.count > 1 else p.stem
+            suffix = p.suffix or '.png'
+            puzzle_path = str(p.parent / f'{stem}{suffix}')
+            answer_path = str(p.parent / f'{stem}_answer{suffix}')
 
             N = len(s)
             use_spiral = N > 30

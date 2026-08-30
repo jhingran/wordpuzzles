@@ -30,6 +30,11 @@ python back_and_forth.py --count 5
 python back_and_forth.py --include "TILE:forward; ROSE:backward"
 # or either direction:
 python back_and_forth.py --include "LLAMA; NOD"
+
+# Two-step: generate clue draft, edit it, then render
+python back_and_forth.py --length 100 --strategy join --draft-clues puzzle.txt
+# ... edit puzzle.txt ...
+python back_and_forth.py --render-clues puzzle.txt --png images/puzzle.png
 ```
 
 ---
@@ -56,6 +61,32 @@ python back_and_forth.py --include "LLAMA; NOD"
 | `--strategy` | auto | `random`, `extend`, or `join` (see below) |
 | `--aid-to-solve` | off | Auto-find one 3-letter hidden word per row; shade cells and add a clue row |
 | `--aid-words` | — | Semicolon-separated words to highlight (must read left to right in a grid row) |
+| `--draft-clues` | — | Generate puzzle and AI clues, write an editable text file (no PNG) |
+| `--render-clues` | — | Read edited clue file and render puzzle + answer PNGs (requires `--png`) |
+
+---
+
+## Two-step clue workflow
+
+The clue setter can review and edit AI-generated clues before the final PNG is produced.
+
+**Step 1 — draft:**
+```bash
+python back_and_forth.py --length 100 --strategy join \
+  --aid-words "MOD;ASP;TAP;UTI;ALE;CAL;LET;APE" \
+  --draft-clues hundred_clues.txt
+```
+
+This generates the puzzle, calls the AI for clues, and writes `hundred_clues.txt` — a plain-text file with one `WORD: clue` line per word, plus a machine-readable `## {JSON}` header and a human-readable answer grid. No PNG is produced yet.
+
+**Step 2 — edit:** open `hundred_clues.txt` in any text editor and change any clue lines you like.
+
+**Step 3 — render:**
+```bash
+python back_and_forth.py --render-clues hundred_clues.txt --png images/hundred.png
+```
+
+This reads your edited clues and writes `images/hundred.png` and `images/hundred_answer.png`. No search is run; the puzzle data comes entirely from the file.
 
 ---
 

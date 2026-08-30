@@ -461,6 +461,98 @@ def generate_clues(sq_words: list, include_words: Optional[dict] = None) -> dict
     return result
 
 
+# ── Two-step clue workflow ────────────────────────────────────────────────────
+
+import json as _json
+
+
+def write_clue_draft(
+    widths: list[int],
+    words: list[str],
+    clues: dict,
+    output_path: str,
+    *,
+    sq_words: list[str] | None = None,
+    clue_seed: int = 0,
+    show_rows: set | None = None,
+    title: str | None = None,
+) -> None:
+    """Write an editable clue-draft text file for an interlocking-squares puzzle."""
+    data = {
+        "widths": widths,
+        "words": words,
+        "clue_seed": clue_seed,
+        "show_rows": sorted(show_rows) if show_rows else None,
+        "title": title,
+    }
+
+    lines: list[str] = []
+    lines.append(f"## {_json.dumps(data, separators=(',', ':'))}")
+    lines.append("")
+    lines.append("# Interlocking Squares puzzle")
+    for i, (w, word) in enumerate(zip(widths, words)):
+        lines.append(f"#   Row {chr(65+i)}: {word}")
+    if sq_words:
+        lines.append(f"#   Square words: {', '.join(sq_words)}")
+    lines.append("#")
+    lines.append("# Edit the clues below, then render with:")
+    lines.append(f"#   python interlocking.py --render-clues {output_path} --png puzzle.png")
+    lines.append("")
+
+    lines.append("## Row words (A, B, C …)")
+    for i, word in enumerate(words):
+        lines.append(f"{word}: {clues.get(word, '')}")
+    lines.append("")
+
+    if sq_words:
+        lines.append("## Square words")
+        for w in sq_words:
+            lines.append(f"{w}: {clues.get(w, '')}")
+
+    Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  Clue draft written to {output_path}")
+    print(f"  Edit the clues, then run:")
+    print(f"    python interlocking.py --render-clues {output_path} --png puzzle.png")
+
+
+def read_clue_file_interlocking(path: str) -> tuple[dict, dict[str, str]]:
+    """Parse a clue-draft file. Returns (puzzle_data dict, clues dict)."""
+    text = Path(path).read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    data_raw = None
+    for line in lines:
+        if line.startswith("## ") and data_raw is None:
+            try:
+                data_raw = _json.loads(line[3:])
+                break
+            except _json.JSONDecodeError:
+                pass
+
+    if data_raw is None:
+        raise ValueError(f"No ## JSON header found in {path}")
+
+    puzzle_data = {
+        "widths":    data_raw["widths"],
+        "words":     data_raw["words"],
+        "clue_seed": data_raw.get("clue_seed", 0),
+        "show_rows": set(data_raw["show_rows"]) if data_raw.get("show_rows") else None,
+        "title":     data_raw.get("title"),
+    }
+
+    clues: dict[str, str] = {}
+    for line in lines:
+        if line.startswith("#") or ":" not in line:
+            continue
+        w, defn = line.split(":", 1)
+        w = w.strip().upper()
+        defn = defn.strip()
+        if w:
+            clues[w] = defn
+
+    return puzzle_data, clues
+
+
 def draw_image(
     widths: list,
     words: Optional[list],
@@ -752,7 +844,34 @@ def main() -> None:
     )
     ap.add_argument("--min-included", type=int, default=2,
                     help="Minimum theme words that must appear (default: 2)")
+    ap.add_argument("--draft-clues", metavar="FILE", default=None,
+                    help="Write editable clue-draft text file instead of PNG")
+    ap.add_argument("--render-clues", metavar="FILE", default=None,
+                    help="Read edited clue draft and render PNGs (requires --png)")
     args = ap.parse_args()
+
+    # ── render-clues: read draft, skip search ─────────────────────────────────
+    if args.render_clues:
+        if not args.png:
+            print("Error: --render-clues requires --png output.png", file=sys.stderr)
+            sys.exit(1)
+        print(f"Reading clue draft from {args.render_clues} …")
+        puzzle_data, clues = read_clue_file_interlocking(args.render_clues)
+        widths_r = puzzle_data["widths"]
+        words_r  = puzzle_data["words"]
+        seed_r   = puzzle_data["clue_seed"]
+        rows_r   = puzzle_data["show_rows"]
+        title_r  = puzzle_data["title"]
+        # Rebuild word_set_4 from wordlist
+        print("Loading wordlist … ", end="", flush=True)
+        ws = load_wordlist(WORDLIST_PATH, args.min_score)
+        print(f"{len(ws):,} words")
+        w4 = build_valid_squares([w for w in ws if len(w) == 4])
+        display(widths_r, words_r, w4)
+        _emit_pngs(widths_r, words_r, w4, args.png,
+                   clues=clues, clue_seed=seed_r,
+                   show_rows=rows_r, title=title_r)
+        return
 
     widths = args.widths
 
@@ -912,15 +1031,17 @@ def main() -> None:
     if found_inc:
         print(f"\n  Theme words included: {', '.join(found_inc)}")
     display(widths, result, word_set_4)
-    if args.png:
-        # Compute all square words for clue generation
-        sq_words = [
-            find_square_word(
-                result[TL[0]][TL[1]], result[TR[0]][TR[1]],
-                result[BR[0]][BR[1]], result[BL[0]][BL[1]], word_set_4,
-            )
-            for (TL, TR, BR, BL) in square_groups(widths)
-        ]
+
+    # Compute square words (needed for both draft and png paths)
+    sq_words = [
+        find_square_word(
+            result[TL[0]][TL[1]], result[TR[0]][TR[1]],
+            result[BR[0]][BR[1]], result[BL[0]][BL[1]], word_set_4,
+        )
+        for (TL, TR, BR, BL) in square_groups(widths)
+    ]
+
+    if args.draft_clues or args.png:
         import os
         if os.environ.get('ANTHROPIC_API_KEY'):
             print("  Generating clues …", end="", flush=True)
@@ -930,7 +1051,14 @@ def main() -> None:
             clues = generate_clues(row_words_for_clues + sq_words, include_words)
             print(" done")
         else:
-            clues = None
+            clues = {}
+
+    if args.draft_clues:
+        write_clue_draft(widths, list(result), clues, args.draft_clues,
+                         sq_words=sq_words, clue_seed=args.seed,
+                         show_rows=show_rows, title=args.title)
+
+    if args.png:
         # Collect cells belonging to theme words (rows + square corners)
         theme_cells: set = set()
         if include_words:
@@ -945,7 +1073,7 @@ def main() -> None:
                                         (BR[0], BR[1]), (BL[0], BL[1])])
         reveal_col = (args.col - 1) if args.col is not None else None
         _emit_pngs(widths, result, word_set_4, args.png,
-                   clues=clues, clue_seed=args.seed,
+                   clues=clues if clues else None, clue_seed=args.seed,
                    theme_cells=theme_cells or None, show_rows=show_rows,
                    reveal_col=reveal_col,
                    acrostic_rows=acrostic_rows, acrostic_hint=acrostic_hint,
