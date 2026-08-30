@@ -1,0 +1,95 @@
+# Clues for filled_401v2 (15×15)
+# Worked through together — Anant + Claude
+# Image: cryptic/images/filled_401v2.png
+
+## ACROSS
+
+1A  (GAS PRICES, 3,6):  Radon, say, costs at the pump (3,6)
+    # "Radon, say" = GAS [def by example, F4]; "costs" = PRICES [synonym]; "at the pump" = def
+
+6A  (TASED, 5):  Stunned by rotten dates (5)
+    # anagram [B1] of DATES; "rotten" = indicator; "Stunned" = def
+    # self-check: D,A,T,E,S sorted A,D,E,S,T = TASED sorted ✓; "Stunned" at start ✓
+
+9A  (STRAITS, 7):  Tight spots between lands (7)
+    # double def [F1]: "tight spots" = dire circumstances; "between lands" = narrow waterways
+
+10A (TERRACE, 7):  Caterer stumbles on the patio (7)
+    # anagram [B1] of CATERER; "stumbles" = indicator; "on the patio" = def
+
+11A (SPIRITS, 7):  Drunk, I strip somewhat early for shots (7)
+    # anagram [B1]: I + STRIP + S(omewhat, first letter via "early") = I,S,T,R,I,P,S → SPIRITS; "shots" = def
+    # self-check: I(1)+STRIP(5)+S(1)=7; sorted I,I,P,R,S,S,T = SPIRITS sorted ✓; "drunk"=indicator; "early" for initial letter (non-standard but accepted)
+
+12A (TRIVIAL, 7):  Easy six in a test (7)
+    # container [D2]: VI (six, Roman numeral) inside TRIAL (test=trial, synonym); "in" = indicator; "Easy" = def
+    # self-check: T,R,I + VI + A,L = T,R,I,V,I,A,L = TRIVIAL ✓; 5+2=7 ✓
+
+13A (SOS, 3):  Distress call either way (3)
+    # palindrome [B4]: SOS reversed = SOS ✓; "either way" = indicator; "distress call" = def
+
+14A (SQUANDERERS, 11):  Short nerds and squares dancing away their fortune? (11)
+    # semi-&lit [F6]: anagram [B1] of NERD (nerds short = tail deletion) + SQUARES; "dancing" = indicator + part of def
+    # self-check: NERD(4)+SQUARES(7)=11; N,E,R,D,S,Q,U,A,R,E,S sorted A,D,E,E,N,Q,R,R,S,S,U = SQUANDERERS ✓; ? justified (semi-&lit)
+
+15A (NECESSITIES, 11):  Boston, Plymouth etc. welcome English ship as needed? (11)
+    # charade+container [D2]: NE (New England) + CITIES welcoming ESS (E=English, SS=ship); "as needed?" = def [F3, ? justified]
+    # self-check: NE(2)+C(1)+ESS(3)+ITIES(5)=11; NE+C[ESS]ITIES = N,E,C,E,S,S,I,T,I,E,S = NECESSITIES ✓
+
+19A (SIS, 3):  Spy sibling (3)
+    # double def [F1]: SIS = Secret Intelligence Service (spy agency) + SIS = sister (sibling, informal)
+    # self-check: both defs genuine and distinct ✓; no indicator needed ✓
+
+20A (BEANIES, 7):  Tropical bird in workers' caps? (7)
+    # container [D2]: ANI (tropical bird) inside BEES (workers = worker bees); "caps?" = def, ? justified (near &lit)
+    # self-check: BEES(4) with ANI(3) inside = B,E,[A,N,I],E,S = BEANIES ✓; 4+3=7 ✓
+
+21A (SEAHAWK, 7):  Footballer is militant at sea (7)
+    # charade [D1]: SEA (at sea) + HAWK (militant, political hawk); "at" = positional indicator (HAWK at SEA → SEA first); "Footballer" = def by example (Seattle Seahawk)
+    # self-check: SEA(3)+HAWK(4)=7; S,E,A,H,A,W,K = SEAHAWK ✓; "Footballer" at start ✓
+
+23A (TRICEPS, 7):  Muscle caught in gastric Epsom treatment (7)
+    # hidden word [C1]: gas-TRICEPS-om; "caught in" = indicator; "Muscle" = def
+    # self-check: G,A,S,[T,R,I,C,E,P,S],O,M ✓; "Muscle" at start ✓
+
+25A (OTOLOGY, 7):  Study sounds always true, but not true (7)
+    # homophone [E1]: TAUTOLOGY (always true) − T (true, logic abbrev) → AUTOLOGY → sounds like OTOLOGY; "sounds" = indicator + ear/hearing double-duty; "Study" = def
+    # self-check: TAUTOLOGY−T→AUTOLOGY≈OTOLOGY ✓ (near-homophone, poetic licence on au/o); "Study" at start ✓; T=true (logic) ✓
+
+26A (STEMS, 5):  Stalks discovered in ecosystem survey (5)
+    # hidden word [C1]: ecoSYSTEM Survey → last 4 of "ecosystem" + first of "survey" = STEMS; "discovered in" = indicator; "Stalks" = def
+    # self-check: ecosyste[M S]urvey spans boundary ✓; STEMS not at start/end of single word ✓
+
+27A (BUSHFIRES, 9):  Scorching, furbishes recklessly (9)
+    # anagram [B1]: FURBISHES → BUSHFIRES; "recklessly" = indicator; "Scorching" = def
+    # self-check: F,U,R,B,I,S,H,E,S sorted B,E,F,H,I,R,S,S,U = BUSHFIRES sorted ✓; "Scorching" at start ✓
+
+## DOWN
+
+1D  (GUSTS, 5):  Bursts found in august surroundings (5)
+    # hidden word [C1]: au[GUSTS]urroundings; "found in" = indicator; "Bursts" = def; "august" = adjective (dignified), not the month
+    # self-check: a,u,[G,U,S,T,S],u,r,r,o,u,n,d,i,n,g,s ✓; spans word boundary ✓; GUSTS not in clue ✓
+
+3D  (RAISINS, 7):  Naked praising, second to Sultanas (7)
+    # deletion+charade [D1]: outer letters of PRAISING removed ("naked") = RAISIN; + S (second) = RAISINS; "Sultanas" = def (capitalized plural for misdirection — solver reads Turkish queens, not fruit)
+    # self-check: P[RAISIN]G(6) + S(1) = 7 ✓; RAISINS not in clue ✓
+
+4D  (CASE STUDIES, 11):  Mystery investigations in Harvard Business Review? (11)
+    # charade+semi-&lit [D1/F6]: CASE (mystery) + STUDIES (investigations) = CASE STUDIES; "in Harvard Business Review?" = def (HBR publishes case studies); ? justified; Anant's clue
+    # self-check: CASE(4)+STUDIES(7)=11 ✓; "mystery"=CASE ✓; "investigations"=STUDIES ✓
+
+2D  (STRAINS, 7):  Son exercises too hard? (7)
+    # semi-&lit [F6]: S (son) + TRAINS (exercises) = STRAINS; whole clue = def (son who exercises too hard strains himself); ? justified
+    # self-check: S(1)+TRAINS(6)=7; S,T,R,A,I,N,S = STRAINS ✓; synonym "exercises"=TRAINS valid in charade ✓
+
+5D  (SIT, 3):  Take the chair? (3)
+    # cryptic def [F3]: "take the chair" = to SIT (preside/chair a meeting); "chair" misdirects to furniture; ? justified
+
+6D  (TERMITE, 7):  Pest destroys emitter (7)
+    # anagram [B1] of EMITTER; "destroys" = indicator; "Pest" = def
+    # self-check: E,M,I,T,T,E,R sorted E,E,I,M,R,T,T = TERMITE sorted ✓; "Pest" at start ✓
+
+7D  (SEASIDE, 7):  Main team's resort (7)
+    # charade [D1]: MAIN = SEA (poetic/archaic "the main" = open sea) + SIDE = team; "resort" = def
+    # self-check: SEA(3)+SIDE(4)=7; S,E,A,S,I,D,E = SEASIDE ✓; "resort" at end ✓; "Main" misdirects to "principal"
+
