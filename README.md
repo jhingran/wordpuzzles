@@ -40,7 +40,7 @@ Two word "ladders" interlocked so that zig-zag "snakes" across them also form va
 
 A diamond-shaped grid where every row reads as a word and every 2×2 corner also reads as a word (clockwise or counterclockwise). The puzzle reveals row lengths but hides the letters.
 
-![Interlocking Squares example](interlocking/examples/sample_puzzle.png)
+![Interlocking Squares example](interlocking/examples/sample.jpeg)
 
 → [`interlocking/`](interlocking/README.md)
 
