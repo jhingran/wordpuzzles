@@ -1,21 +1,63 @@
 # Word Puzzle Generator
 
-A Python toolkit for generating and cluing word puzzles.
+A Python toolkit for generating, filling, and cluing word puzzles. Four puzzle types, each with its own generator and worked example.
 
-| Module | Description |
-|--------|-------------|
-| [`back_and_forth/`](back_and_forth/README.md) | Back-and-Forth — string that parses as valid word chains in both directions, with disjoint cuts |
-| [`cryptic/`](cryptic/README.md) | British-style crossword grid generator, CSP filler, and cryptic clue generator |
-| [`snakes_ladders/`](snakes_ladders/README.md) | Snakes & Ladders word puzzle (inspired by Eric Berlin's Jelly Roll) |
-| [`interlocking/`](interlocking/README.md) | Interlocking Squares — diamond-shaped grid with shared corner words |
-| `wordlist.dict` | Shared quality-scored word list (~252k entries) |
+---
 
-See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for wordlist source, algorithm papers, and puzzle inspiration credits.
+## Puzzle types
+
+### Back-and-Forth
+
+A string of letters that can be cut two different ways — each cut reading left-to-right and right-to-left yields a valid word chain. The puzzle presents only the letter string; solvers must find both cuts.
+
+![Back-and-Forth example](back_and_forth/examples/hundred_spiral.png)
+
+→ [`back_and_forth/`](back_and_forth/README.md)
+
+---
+
+### British Cryptic Crossword
+
+A 15×15 grid filled with a CSP word solver, then clued in the British cryptic style (definition + wordplay). Comes with an interactive grid filler, a two-step clue workflow, and a canonical puzzle store.
+
+![Cryptic crossword example](cryptic/examples/15x15_sample_blank.png)
+
+→ [`cryptic/`](cryptic/README.md)
+
+---
+
+### Snakes & Ladders
+
+Two word "ladders" interlocked so that zig-zag "snakes" across them also form valid words. The puzzle hides all word boundaries; solvers must identify the cuts.
+
+![Snakes & Ladders example](snakes_ladders/examples/sample_puzzle.png)
+
+→ [`snakes_ladders/`](snakes_ladders/README.md)
+
+---
+
+### Interlocking Squares
+
+A diamond-shaped grid where every row reads as a word and every 2×2 corner also reads as a word (clockwise or counterclockwise). The puzzle reveals row lengths but hides the letters.
+
+![Interlocking Squares example](interlocking/examples/sample_puzzle.png)
+
+→ [`interlocking/`](interlocking/README.md)
 
 ---
 
 ## Requirements
 
-- Python 3.10+
-- Pillow (`pip install Pillow`)
-- anthropic (`pip install anthropic`) — only for clue generation via Claude API
+```bash
+pip install Pillow
+pip install anthropic   # only for Claude-assisted clue generation
+export ANTHROPIC_API_KEY=...
+```
+
+Python 3.9+. The shared word list (`wordlist.dict`) is downloaded automatically on first run.
+
+---
+
+## Wordlist
+
+Shared across all puzzle types. See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for source and credits.

@@ -17,6 +17,8 @@ The grid has six rows with widths **3 · 5 · 7 · 7 · 5 · 3**. Where adjacent
 
 Shared corners between rows A–B and B–C: letters B·C·G·F form a square word (e.g. CAGE, EGAC, GACE, ACEG — whichever is a real word).
 
+A worked example with solution is in [`examples/`](examples/).
+
 ## Features
 
 - **CSP solver** — backtracking with forward-checking and quality scoring

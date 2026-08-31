@@ -1,10 +1,10 @@
 *.png
-!back_and_forth/images/hundred_spiral.png
-!back_and_forth/images/hundred_spiral_answer.png
+!back_and_forth/examples/*.png
 !cryptic/images/filled_401v2.png
 !cryptic/images/filled_401v2_blank.png
-!cryptic/images/15x15_sample.png
-!cryptic/images/15x15_sample_blank.png
+!cryptic/examples/*.png
+!interlocking/examples/*.png
+!snakes_ladders/examples/*.png
 __pycache__/
 *.pyc
 .DS_Store

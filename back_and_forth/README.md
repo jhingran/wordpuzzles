@@ -9,6 +9,8 @@ Backward:  … BALDNESS · BACKSIDE · MODE · GASPIPE · TILE · PANATELA · BE
 
 The constraint is strict: no cut position may be shared between the forward and backward chains anywhere in the string.
 
+A worked example with solution is in [`examples/`](examples/).
+
 ---
 
 ## Quick start

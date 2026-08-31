@@ -472,10 +472,10 @@ def write_clue_draft(
     clues: dict,
     output_path: str,
     *,
-    sq_words: list[str] | None = None,
+    sq_words: "list[str] | None" = None,
     clue_seed: int = 0,
-    show_rows: set | None = None,
-    title: str | None = None,
+    show_rows: "set | None" = None,
+    title: "str | None" = None,
 ) -> None:
     """Write an editable clue-draft text file for an interlocking-squares puzzle."""
     data = {

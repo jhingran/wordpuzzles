@@ -26,6 +26,8 @@ Snakes:
   GUSTS    ←  GU(L1) + ST(L2) + S(L1)
 ```
 
+A worked example with solution is in [`examples/`](examples/).
+
 ## Usage
 
 ```bash

@@ -2,6 +2,8 @@
 
 British-style crossword grid generator, CSP word filler, and cryptic clue generator.
 
+A fully worked 15×15 example (blank grid + solution) is in [`examples/`](examples/).
+
 ## Requirements
 
 ```bash
