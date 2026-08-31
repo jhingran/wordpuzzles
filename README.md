@@ -18,7 +18,7 @@ A string of letters that can be cut two different ways — each cut reading left
 
 ### British Cryptic Crossword
 
-A 15×15 grid filled with a CSP word solver, then clued in the British cryptic style (definition + wordplay). Comes with an interactive grid filler, a two-step clue workflow, and a canonical puzzle store.
+A 15×15 British cryptic crossword — grid generator, word filler, and clue-writing tools. Clues follow the British cryptic convention: every clue has a definition and a wordplay component. Best written collaboratively with Claude.
 
 ![Cryptic crossword example](cryptic/examples/15x15_sample_blank.png)
 
