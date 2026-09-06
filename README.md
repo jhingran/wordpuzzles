@@ -89,6 +89,18 @@ Python 3.9+. The shared word list (`wordlist.dict`) is downloaded automatically 
 
 ---
 
+## Contributions
+
+This is a personal project, shared openly. A few guidelines:
+
+**Forks** — welcome. If you build on this, a link back to this repo in your README is appreciated but not required.
+
+**Pull requests** — considered. I'm most interested in new puzzle types and bug fixes. Changes to existing puzzle logic are welcome if they don't break things; I'll review and may close PRs that don't fit the project's direction. No promises on response time — this is a side project.
+
+**Issues** — feel free to open one if you find a bug or have a puzzle idea.
+
+---
+
 ## Wordlist
 
 Shared across all puzzle types. See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for source and credits.
