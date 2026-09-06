@@ -4,12 +4,30 @@ This project builds on a body of work in constraint satisfaction, crossword cons
 
 ---
 
+## Back-and-Forth puzzle format
+
+**Will Shortz**
+https://www.nytimes.com/puzzles/crosswords
+
+The Back-and-Forth puzzle format (`back_and_forth/`) is inspired by Will Shortz's work as a puzzle inventor and editor. We are grateful to him for a lifetime of puzzle innovation.
+
+---
+
 ## Snakes & Ladders puzzle format
 
 **Eric Berlin**
 https://ericberlin.com
 
-The Snakes & Ladders puzzle format (implemented in `snakes_ladders/`) is directly inspired by Eric Berlin's *Jelly Roll* puzzle. In Jelly Roll, two vertical word ladders are interleaved into a continuous braid; snakes wind between the two ladders, taking alternating pairs of letters from each. Eric Berlin is the originator of this puzzle type. His puzzles are a masterclass in cryptic and constructional word play — we are grateful to him for the inspiration.
+The Snakes & Ladders puzzle format (`snakes_ladders/`) is directly inspired by Eric Berlin's *Jelly Roll* puzzle. In Jelly Roll, two vertical word ladders are interleaved into a continuous braid; snakes wind between the two ladders, taking alternating pairs of letters from each. Eric Berlin is the originator of this puzzle type. His puzzles are a masterclass in cryptic and constructional word play — we are grateful to him for the inspiration.
+
+---
+
+## Interlocking Squares puzzle format
+
+**Eric Berlin**
+https://ericberlin.com
+
+The Interlocking Squares format (`interlocking/`) is inspired by Eric Berlin's interlocking puzzle work, in which adjacent grid rows share corner letters that form additional words. Berlin's puzzles use hexagonal interlocks; our adaptation uses a diamond-shaped grid with 2×2 square corners.
 
 ---
 
