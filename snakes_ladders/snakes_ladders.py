@@ -981,7 +981,7 @@ def _parse_include(s: str) -> dict[str, str]:
       WORD          (clue left blank; Claude API will generate it)
 
     Example:
-      "RENU: my wife; POPPY: her nickname for me; JUNE; ARNIE"
+      "JOHN: the birthday boy; JUNE: the month; LOVE"
     """
     result: dict[str, str] = {}
     for entry in s.split(";"):

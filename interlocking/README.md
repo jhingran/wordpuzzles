@@ -41,7 +41,7 @@ python3 interlocking.py --seed 3100 --min-score 60 \
 
 # Include theme words (e.g. a name as a square word)
 python3 interlocking.py --seed 1 \
-    --include "renu; love; home" --min-included 1 \
+    --include "happy; love; home" --min-included 1 \
     --acrostic HEARTS --rows B D --png out.png
 ```
 

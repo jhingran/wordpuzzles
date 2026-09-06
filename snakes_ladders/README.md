@@ -36,7 +36,7 @@ python snakes_ladders.py generate --length 12 --seed 42
 
 # Generate with themed words (e.g. for an anniversary)
 python snakes_ladders.py generate --length 12 --seed 100 \
-  --include "RENU: my wife; ARNIE: our son; JUNE: our wedding month; POPPY: her name for me"
+  --include "JOHN: the birthday boy; JUNE: the month; LOVE"
 
 # Generate and save puzzle images
 python snakes_ladders.py generate --length 12 --seed 42 --png puzzle.png
@@ -68,7 +68,7 @@ Use `--include` to embed personal words — names, dates, occasions — into the
 
 ```bash
 python snakes_ladders.py generate --length 12 --seed 200 \
-  --include "RENU: my wife; ARNIE: our son; JUNE: our wedding month; POPPY: her name for me" \
+  --include "JOHN: the birthday boy; JUNE: the month; LOVE: always" \
   --png anniversary.png
 ```
 

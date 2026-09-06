@@ -147,7 +147,7 @@ def _found_include(widths: list, words: list, word_set_4: set,
     for (TL, TR, BR, BL) in groups:
         cw = (words[TL[0]][TL[1]] + words[TR[0]][TR[1]]
               + words[BR[0]][BR[1]] + words[BL[0]][BL[1]])
-        # Check all 8 rotations (4 CW + 4 CCW) so RENU is found even if RUNE is canonical
+        # Check all 8 rotations (4 CW + 4 CCW) so any rotation of a theme word is found
         for s in (cw, cw[::-1]):
             for i in range(4):
                 rot = s[i:] + s[:i]
