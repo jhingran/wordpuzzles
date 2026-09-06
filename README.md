@@ -2,6 +2,37 @@
 
 A Python toolkit for generating, filling, and cluing word puzzles. Four puzzle types, each with its own generator and worked example.
 
+## How it works
+
+The algorithms do the heavy lifting — they search for valid fills, check word quality, and render the puzzle images. But the clues are yours. Each puzzle type stores its content in a plain Python dict that you can edit directly, for example [`cryptic/puzzles_data.py`](cryptic/puzzles_data.py):
+
+```python
+"my_puzzle": {
+    "grid": [...],
+    "clues": {
+        "1A": "Your clue here (5)",
+        "1D": "Another clue (7)",
+        ...
+    }
+}
+```
+
+Edit the clues, re-run the renderer, and you get updated puzzle images. No programming knowledge required beyond opening a file.
+
+Every puzzle type is generated from the command line, for example:
+
+```bash
+python3 cryptic/filler.py --seed 401 --png mypuzzle.png
+```
+
+The exact flags vary by puzzle type — see each subdirectory's README for details.
+
+**Claude is entirely optional.** You do not need an Anthropic API key to generate or render any puzzle. The one exception is if you want Claude to help you write cryptic crossword clues — for that, add your key to a `.env` file:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
 ---
 
 ## Puzzle types
