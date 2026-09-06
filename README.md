@@ -6,10 +6,10 @@ This project grew out of making personalised puzzles for friends and family — 
 
 ```bash
 # A Snakes & Ladders puzzle built around an anniversary
-python3 snakes_ladders/snakes_ladders.py generate --include "RENU; ARNIE; JUNE" --png puzzle.png
+python3 snakes_ladders/snakes_ladders.py generate --include "JOHN; JUNE; LOVE" --png puzzle.png
 
 # An Interlocking Squares puzzle with a birthday message
-python3 interlocking/interlocking.py --include "HAPPY; ARJUN; MAMA" --png puzzle.png
+python3 interlocking/interlocking.py --include "HAPPY; BIRTHDAY; BOB" --png puzzle.png
 
 # A Back-and-Forth puzzle hiding two names
 python3 back_and_forth/back_and_forth.py --include "ALICE:forward; BOB:backward" --png puzzle.png
