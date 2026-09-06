@@ -2,6 +2,21 @@
 
 A Python toolkit for generating, filling, and cluing word puzzles. Four puzzle types, each with its own generator and worked example.
 
+This project grew out of making personalised puzzles for friends and family — a birthday puzzle with someone's name hidden in the grid, an anniversary puzzle built around a shared memory, a puzzle that spells out a secret message. Three of the four puzzle types let you pass in a list of words you want the solver to try and include:
+
+```bash
+# A Snakes & Ladders puzzle built around an anniversary
+python3 snakes_ladders/snakes_ladders.py generate --include "RENU; ARNIE; JUNE" --png puzzle.png
+
+# An Interlocking Squares puzzle with a birthday message
+python3 interlocking/interlocking.py --include "HAPPY; ARJUN; MAMA" --png puzzle.png
+
+# A Back-and-Forth puzzle hiding two names
+python3 back_and_forth/back_and_forth.py --include "ALICE:forward; BOB:backward" --png puzzle.png
+```
+
+The solver does its best to honour your words — it guarantees at least a minimum number will appear, and fills the rest automatically. The cryptic crossword doesn't have an include list (the grid is fixed before cluing), but you can steer it by choosing which fill to keep in interactive mode.
+
 ## How it works
 
 The algorithms do the heavy lifting — they search for valid fills, check word quality, and render the puzzle images. But the clues are yours. Each puzzle type stores its content in a plain Python dict that you can edit directly, for example [`cryptic/puzzles_data.py`](cryptic/puzzles_data.py):
