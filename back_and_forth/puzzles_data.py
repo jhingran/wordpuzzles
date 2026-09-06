@@ -26,6 +26,11 @@ PUZZLES = {
     # Built by joining two sub-puzzles; see back_and_forth/README.md §Building long puzzles
     # Aid words: MOD, ASP, TAP, UTI, ALE, CAL, LET, APE (left→right, rows 1,1,2,2,7,7,8,8)
     'hundred': {
+        # ── editable fields ───────────────────────────────────────────────────
+        'title':  None,           # optional subtitle shown below "BACK-AND-FORTH"
+        'credit': 'Anant Jhingran and Claude, inspired by Will Shortz\'s NY Times puzzles',
+        'thanks': None,           # optional small-print line (e.g. special thanks)
+        # ─────────────────────────────────────────────────────────────────────
         's': (
             'LECTURESLEEPYTWOSTARBALDNESSBACKSIDE'
             'MODEGASPIPETILEPANATELABEERTAPSMUTATE'

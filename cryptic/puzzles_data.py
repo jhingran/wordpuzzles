@@ -20,6 +20,9 @@ PUZZLES: dict[str, dict] = {
     # Worked through clues together — Anant + Claude
     # '.' = black square
     "filled_401v2": {
+        # ── editable fields ───────────────────────────────────────────────────
+        "author": "Anant Jhingran and Claude",   # shown in puzzle credit
+        # ─────────────────────────────────────────────────────────────────────
         "size": 15,
         "grid": [
             "GASPRICES.TASED",   # row  1

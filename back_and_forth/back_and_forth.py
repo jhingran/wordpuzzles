@@ -1329,7 +1329,7 @@ def draw_puzzle_png_spiral(
     if credit:
         cx_text(credit, f_sub, img_w // 2, y, SUB_C)
         y += SUB_H
-    thanks_text = thanks or ('(special thanks to Manbir Khurana for helping improve the puzzle)' if aid_words else None)
+    thanks_text = thanks or None
     if thanks_text:
         f_thanks = _load_font(11)
         cx_text(thanks_text, f_thanks, img_w // 2, y, SUB_C)
