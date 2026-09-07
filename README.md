@@ -92,6 +92,16 @@ A diamond-shaped grid where every row reads as a word and every 2×2 corner also
 
 ---
 
+### Themed Blocks
+
+A rectangular grid where a decorative shape — heart, star, or any pixel-art outline — is drawn with coloured cells that carry no letters. Every row and column is one word slot; words span the full row/column but skip the coloured cells. Pass in theme words and the solver places them first.
+
+![Themed Blocks example](themedblocks/examples/heart_love.png)
+
+→ [`themedblocks/`](themedblocks/README.md)
+
+---
+
 ## Requirements
 
 ```bash

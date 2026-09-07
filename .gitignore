@@ -5,6 +5,7 @@
 !cryptic/examples/*.png
 !interlocking/examples/*.png
 !snakes_ladders/examples/*.png
+!themedblocks/examples/*.png
 __pycache__/
 *.pyc
 .DS_Store

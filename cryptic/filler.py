@@ -1093,6 +1093,8 @@ def main() -> None:
                         help="Backtracking time limit in seconds")
     parser.add_argument("--noise", type=float, default=0.15,
                         help="Scoring noise ±fraction to diversify fills (0=off)")
+    parser.add_argument("--include", metavar="WORDS", default=None,
+                        help="Semicolon-separated words to favour in the fill, e.g. 'HAPPY; ANNIVERSARY'")
     parser.add_argument("--interactive", action="store_true",
                         help="After solving, enter a feedback loop to ban words and re-solve")
     # Output
@@ -1142,6 +1144,25 @@ def main() -> None:
         args.wordlist, min_score=args.min_score, min_len=args.min_word,
         penalize_s_plurals=not args.allow_s_plurals,
     )
+
+    # Boost include words to the top of the scoring range.
+    include_words: list[str] = []
+    if args.include:
+        include_words = [w.strip().upper() for w in args.include.split(";") if w.strip()]
+        BOOST = 10_000
+        for w in include_words:
+            if len(w) < args.min_word:
+                print(f"  [include] '{w}' is shorter than --min-word {args.min_word}, skipping")
+                continue
+            word_scores[w] = BOOST
+            n = len(w)
+            # Update length index
+            length_index[n] = length_index.get(n, frozenset()) | {w}
+            # Update pos index for each letter position
+            for pos, letter in enumerate(w):
+                key = (n, pos, letter)
+                pos_index[key] = pos_index.get(key, frozenset()) | {w}
+        print(f"  [include] boosted: {', '.join(include_words)}")
 
     # Grid
     from grid_gen import generate, improve_grid, render, stats
