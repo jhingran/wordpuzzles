@@ -1281,8 +1281,12 @@ def draw_puzzle_png_spiral(
         _aid_hdr = 'Aid to solve:'
 
     # ── Clue section header strings ──
-    fwd_hdr = f'Clockwise (starting from 1):'
-    bwd_hdr = f'Anticlockwise (starting from {N}):'
+    if rows == 1:
+        fwd_hdr = f'Left to right (starting from 1):'
+        bwd_hdr = f'Right to left (starting from {N}):'
+    else:
+        fwd_hdr = f'Clockwise (starting from 1):'
+        bwd_hdr = f'Anticlockwise (starting from {N}):'
 
     # ── Pre-compute clue section height (dummy draw for text measurement) ──
     from PIL import Image as _PILImage, ImageDraw as _PILDraw
@@ -1465,14 +1469,11 @@ def main() -> None:
     ap.add_argument('--render-clues',  metavar='FILE', default=None,
                     help='Read an edited clue draft and render puzzle + answer PNGs (requires --png)')
     ap.add_argument('--render-personal', metavar='KEY', default=None,
-                    help='Render a puzzle from puzzles_personal.py by key (requires --png)')
+                    help='Render a puzzle from puzzles_personal.py by key; saves to images/<key>.png')
     args = ap.parse_args()
 
     # ── render-personal: render from puzzles_personal.py ─────────────────────
     if args.render_personal:
-        if not args.png:
-            print('Error: --render-personal requires --png output.png', file=sys.stderr)
-            sys.exit(1)
         import importlib.util as _ilu
         _spec = _ilu.spec_from_file_location('puzzles_personal',
                     Path(__file__).parent / 'puzzles_personal.py')
@@ -1496,7 +1497,13 @@ def main() -> None:
         puzzle_credit = p_data.get('credit', None)
         puzzle_circles = p_data.get('circle_words')
         display(fwd_words, bwd_words, s, fwd_cuts, bwd_cuts)
-        p = Path(args.png)
+        # Output path: --png overrides, otherwise auto-derive from key
+        if args.png:
+            p = Path(args.png)
+        else:
+            images_dir = Path(__file__).parent / 'images'
+            images_dir.mkdir(exist_ok=True)
+            p = images_dir / f'{key}.png'
         puzzle_path = str(p)
         answer_path = str(p.parent / f'{p.stem}_answer{p.suffix or ".png"}')
         N = len(s)

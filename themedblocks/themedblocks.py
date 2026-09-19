@@ -37,6 +37,30 @@ SHAPES: dict[str, dict] = {
             (5,3),
         },
     },
+    "body_6x7": {
+        # 6 rows × 7 cols — same dimensions as heart_6x7.
+        # Body lies diagonally upper-left → lower-right.
+        # Slot lengths: across all 5 — down 5,4,4,4,4,4,5
+        # Short slots keep the CSP tractable; highlight_skip marks the bullet hole in red.
+        "rows": 6, "cols": 7,
+        "color": (35, 35, 35),           # near-black for the body silhouette
+        "highlight_color": (190, 30, 30), # blood-red for the bullet hole
+        "skip": {
+            # head — diamond outline, upper-left
+            (0,1),(0,2),
+            (1,0),(1,3),
+            (2,1),(2,2),
+            # bullet hole — two cells on the torso (rendered red)
+            (3,3),(3,4),
+            # torso / lower body
+            (4,4),(4,5),
+            # feet, bottom-right
+            (5,5),(5,6),
+        },
+        "highlight_skip": {
+            (3,3),(3,4),   # bullet hole (coloured separately)
+        },
+    },
 }
 
 
@@ -119,6 +143,48 @@ def load_wordlist(path: Path, min_score: int = 50) -> dict[int, list[str]]:
 
 class _Timeout(Exception):
     pass
+
+
+def _find_preassignment(
+    include_words: list[str],
+    slots:         list[Slot],
+    crossings:     dict[Slot, list],
+) -> "Optional[dict[Slot, str]]":
+    """Assign every include word to a distinct slot.
+
+    Only crossing constraints *between include-word slots* are checked here;
+    the main backtracker enforces the rest.  Words sorted most-constrained
+    first (fewest candidate slots) so we prune early.
+    """
+    length_to_slots: dict[int, list[Slot]] = defaultdict(list)
+    for s in slots:
+        length_to_slots[s.length].append(s)
+
+    words = sorted(include_words, key=lambda w: len(length_to_slots[len(w)]))
+
+    def bt(idx: int, assignment: dict[Slot, str], used: set) -> "Optional[dict[Slot, str]]":
+        if idx == len(words):
+            return dict(assignment)
+        word = words[idx]
+        for slot in length_to_slots[len(word)]:
+            if slot in used:
+                continue
+            ok = True
+            for my_pos, other_slot, other_pos in crossings.get(slot, []):
+                if other_slot in assignment:
+                    if assignment[other_slot][other_pos] != word[my_pos]:
+                        ok = False
+                        break
+            if not ok:
+                continue
+            assignment[slot] = word
+            result = bt(idx + 1, assignment, used | {slot})
+            del assignment[slot]
+            if result is not None:
+                return result
+        return None
+
+    return bt(0, {}, set())
 
 
 def _backtrack(
@@ -210,58 +276,32 @@ def solve(
         rng.shuffle(rest)
         domains[slot] = pinned + rest
 
-    # Pre-pin: deterministically assign include words before backtracking starts.
-    # Priority: (1) unique total match, (2) unique across match, (3) unique down match.
-    # Pre-pinning prevents the backtracker from locking crossing slots in a direction
-    # that makes an include word impossible to place later.
-    length_to_slots: dict[int, list[Slot]] = defaultdict(list)
-    length_to_across: dict[int, list[Slot]] = defaultdict(list)
-    length_to_down:   dict[int, list[Slot]] = defaultdict(list)
-    for slot in slots:
-        length_to_slots[slot.length].append(slot)
-        if slot.direction == 'A':
-            length_to_across[slot.length].append(slot)
-        else:
-            length_to_down[slot.length].append(slot)
-
+    # Pre-pin all include words using a mini-backtracker that checks
+    # include-vs-include crossing constraints.  This prevents the main solver
+    # from locking crossing slots with letters that make an include word impossible.
     pre_assignment: dict[Slot, str] = {}
     pre_used: set[str] = set()
 
-    for word in include_words:
-        n = len(word)
-        all_cands    = length_to_slots[n]
-        across_cands = length_to_across[n]
-        down_cands   = length_to_down[n]
-
-        target = None
-        if len(all_cands) == 1:
-            target = all_cands[0]
-        elif len(across_cands) == 1:
-            target = across_cands[0]
-        elif len(down_cands) == 1:
-            target = down_cands[0]
-
-        if target is not None and target not in pre_assignment:
-            pre_assignment[target] = word
-            pre_used.add(word)
-
-    # Forward-check from each pre-assignment
-    for slot, word in pre_assignment.items():
-        for my_pos, other_slot, other_pos in crossings.get(slot, []):
-            if other_slot not in pre_assignment:
-                domains[other_slot] = [
-                    w for w in domains[other_slot]
-                    if w not in pre_used and w[other_pos] == word[my_pos]
-                ]
+    if include_words:
+        found = _find_preassignment(include_words, slots, crossings)
+        if found:
+            pre_assignment = found
+            pre_used       = set(include_words)
+            # Forward-check: prune every unassigned slot's domain using the
+            # crossing constraints imposed by each pre-pinned word.
+            for slot, word in pre_assignment.items():
+                for my_pos, other_slot, other_pos in crossings.get(slot, []):
+                    if other_slot not in pre_assignment:
+                        domains[other_slot] = [
+                            w for w in domains[other_slot]
+                            if w not in pre_used and w[other_pos] == word[my_pos]
+                        ]
+        else:
+            print("Warning: could not assign all include words to distinct slots — "
+                  "some may not appear.")
 
     unassigned = [s for s in slots if s not in pre_assignment]
-
-    # Sort: include-word slots first (highest priority for the backtracker), then MRV
-    unassigned = sorted(
-        unassigned,
-        key=lambda s: (0 if any(len(w) == s.length for w in include_words) else 1,
-                       len(domains[s])),
-    )
+    unassigned.sort(key=lambda s: len(domains[s]))
 
     deadline = time.monotonic() + time_limit
     try:
@@ -276,7 +316,11 @@ def solve(
 def render_ascii(
     rows: int, cols: int, skip: set,
     assignment: Optional[dict[Slot, str]] = None,
+    highlight_skip: "set | None" = None,
+    skip_char: str = "█",
+    highlight_char: str = "•",
 ) -> str:
+    hl = highlight_skip or set()
     cell_letter: dict[tuple, str] = {}
     if assignment:
         for slot, word in assignment.items():
@@ -287,8 +331,10 @@ def render_ascii(
     for r in range(rows):
         row = []
         for c in range(cols):
-            if (r, c) in skip:
-                row.append("♥ ")
+            if (r, c) in hl:
+                row.append(highlight_char + " ")
+            elif (r, c) in skip:
+                row.append(skip_char + " ")
             elif assignment:
                 row.append(cell_letter.get((r, c), '?') + ' ')
             else:
@@ -307,23 +353,38 @@ def render_png(
     output_path: str,
     clues: "dict[str, str] | None" = None,
     color: tuple = (220, 80, 100),
+    highlight_skip: "set | None" = None,
+    highlight_color: "tuple | None" = None,
     cell_px: int = 72,
     solved: bool = False,
+    title: "str | None" = None,
+    credit: "str | None" = None,
+    thanks: "str | None" = None,
 ) -> None:
     from PIL import Image, ImageDraw, ImageFont
+
+    hl_skip  = highlight_skip or set()
+    hl_color = highlight_color or color
 
     MARGIN     = cell_px // 2
     CLUE_W     = 320
     GRID_W     = cols * cell_px
     GRID_H     = rows * cell_px
+
+    # Header height: title + credit + thanks lines above the grid
+    HDR_LINES  = [t for t in [title, credit, thanks] if t]
+    HDR_H      = (len(HDR_LINES) * 20 + 10) if HDR_LINES else 0
+
     IMG_W      = MARGIN + GRID_W + MARGIN + (CLUE_W if clues else 0)
-    IMG_H      = MARGIN + GRID_H + MARGIN
+    IMG_H      = HDR_H + MARGIN + GRID_H + MARGIN
 
     BG         = (250, 248, 245)
     GRID_LINE  = (180, 180, 180)
     TEXT_C     = (30, 30, 30)
     SKIP_C     = color
     SKIP_LITE  = tuple(min(255, v + 60) for v in color)
+    HL_C       = hl_color
+    HL_LITE    = tuple(min(255, v + 60) for v in hl_color)
 
     img  = Image.new("RGB", (IMG_W, IMG_H), BG)
     draw = ImageDraw.Draw(img)
@@ -333,8 +394,24 @@ def render_png(
         font_small  = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", cell_px // 5)
         font_clue   = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 13)
         font_head   = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 15)
+        font_title  = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 20)
+        font_sub    = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 13)
     except Exception:
         font_letter = font_small = font_clue = font_head = ImageFont.load_default()
+        font_title  = font_sub = ImageFont.load_default()
+
+    # Draw header
+    hy = 8
+    if title:
+        bb = draw.textbbox((0, 0), title, font=font_title)
+        tw = bb[2] - bb[0]
+        draw.text(((IMG_W - tw) // 2, hy), title, font=font_title, fill=(60, 60, 60))
+        hy += 22
+    for sub in [t for t in [credit, thanks] if t]:
+        bb = draw.textbbox((0, 0), sub, font=font_sub)
+        tw = bb[2] - bb[0]
+        draw.text(((IMG_W - tw) // 2, hy), sub, font=font_sub, fill=(130, 130, 130))
+        hy += 16
 
     # Build cell→letter
     cell_letter: dict[tuple, str] = {}
@@ -343,12 +420,16 @@ def render_png(
             for cell, letter in zip(slot.cells, word):
                 cell_letter[cell] = letter
 
+    GRID_TOP = HDR_H + MARGIN   # vertical offset for grid top
+
     # Draw cells
     for r in range(rows):
         for c in range(cols):
             x = MARGIN + c * cell_px
-            y = MARGIN + r * cell_px
-            if (r, c) in skip:
+            y = GRID_TOP + r * cell_px
+            if (r, c) in hl_skip:
+                draw.rectangle([x, y, x+cell_px, y+cell_px], fill=HL_C, outline=HL_LITE)
+            elif (r, c) in skip:
                 draw.rectangle([x, y, x+cell_px, y+cell_px], fill=SKIP_C, outline=SKIP_LITE)
             else:
                 draw.rectangle([x, y, x+cell_px, y+cell_px], fill="white", outline=GRID_LINE)
@@ -365,19 +446,19 @@ def render_png(
         label = str(r + 1)
         bb = draw.textbbox((0,0), label, font=font_small)
         lw, lh = bb[2]-bb[0], bb[3]-bb[1]
-        draw.text((MARGIN - lw - 4, MARGIN + r*cell_px + (cell_px-lh)//2),
+        draw.text((MARGIN - lw - 4, GRID_TOP + r*cell_px + (cell_px-lh)//2),
                   label, font=font_small, fill=(120,120,120))
     for c in range(cols):
         label = str(c + 1)
         bb = draw.textbbox((0,0), label, font=font_small)
         lw, lh = bb[2]-bb[0], bb[3]-bb[1]
-        draw.text((MARGIN + c*cell_px + (cell_px-lw)//2, MARGIN - lh - 4),
+        draw.text((MARGIN + c*cell_px + (cell_px-lw)//2, GRID_TOP - lh - 4),
                   label, font=font_small, fill=(120,120,120))
 
     # Clue panel
     if clues:
         cx = MARGIN + GRID_W + MARGIN
-        cy = MARGIN
+        cy = GRID_TOP
         across_slots = sorted([s for s in slots if s.direction == 'A'], key=lambda s: s.index)
         down_slots   = sorted([s for s in slots if s.direction == 'D'], key=lambda s: s.index)
 
@@ -390,7 +471,7 @@ def render_png(
             for slot in slot_list:
                 key = f"{slot.index+1}{slot.direction}"
                 clue_text = clues.get(key, '')
-                entry = f"{slot.index+1}. ({slot.length}) {clue_text}"
+                entry = f"{slot.index+1}. {clue_text}"
                 # Simple word-wrap
                 words_in_clue = entry.split()
                 line, lines_out = '', []
@@ -435,13 +516,35 @@ def main():
     parser.add_argument('--min-score',  type=int,   default=50)
     parser.add_argument('--png',        metavar='FILE', default=None)
     parser.add_argument('--cell-px',    type=int,   default=72)
+    parser.add_argument('--render-personal', metavar='KEY', default=None,
+                        help='Render a puzzle from puzzles_personal.py by key')
     args = parser.parse_args()
 
-    shape  = SHAPES[args.shape]
-    rows   = shape['rows']
-    cols   = shape['cols']
-    skip   = shape['skip']
-    color  = shape.get('color', (220, 80, 100))
+    # ── render-personal: load puzzles_personal.py and render ──────────────────
+    if args.render_personal:
+        import importlib.util as _ilu
+        _personal_path = Path(__file__).parent / 'puzzles_personal.py'
+        if not _personal_path.exists():
+            print(f"Error: {_personal_path} not found.", file=__import__('sys').stderr)
+            return
+        _spec = _ilu.spec_from_file_location('puzzles_personal', _personal_path)
+        _mod  = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        key = args.render_personal
+        if key not in _mod.PUZZLES:
+            print(f"Error: key {key!r} not found in puzzles_personal.py", file=__import__('sys').stderr)
+            print(f"Keys: {', '.join(_mod.PUZZLES)}", file=__import__('sys').stderr)
+            return
+        _mod.render_puzzle(key, cell_px=args.cell_px)
+        return
+
+    shape           = SHAPES[args.shape]
+    rows            = shape['rows']
+    cols            = shape['cols']
+    skip            = shape['skip']
+    color           = shape.get('color', (220, 80, 100))
+    highlight_skip  = shape.get('highlight_skip', set())
+    highlight_color = shape.get('highlight_color', None)
 
     slots, crossings = build_slots_and_crossings(rows, cols, skip)
 
@@ -471,7 +574,7 @@ def main():
         return
 
     print(f"Solved in {elapsed:.2f}s\n")
-    print(render_ascii(rows, cols, skip, result))
+    print(render_ascii(rows, cols, skip, result, highlight_skip=highlight_skip))
     print()
     across = sorted([s for s in result if s.direction == 'A'], key=lambda s: s.index)
     down   = sorted([s for s in result if s.direction == 'D'], key=lambda s: s.index)
@@ -486,9 +589,11 @@ def main():
         p = Path(args.png)
         answer_path = str(p.parent / f"{p.stem}_answer{p.suffix or '.png'}")
         render_png(rows, cols, skip, result, slots, crossings,
-                   str(p), color=color, cell_px=args.cell_px, solved=False)
+                   str(p), color=color, highlight_skip=highlight_skip,
+                   highlight_color=highlight_color, cell_px=args.cell_px, solved=False)
         render_png(rows, cols, skip, result, slots, crossings,
-                   answer_path, color=color, cell_px=args.cell_px, solved=True)
+                   answer_path, color=color, highlight_skip=highlight_skip,
+                   highlight_color=highlight_color, cell_px=args.cell_px, solved=True)
 
 
 if __name__ == '__main__':
